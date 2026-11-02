@@ -28,9 +28,6 @@ delta_ranges : dict[scalar_key, float or None]
 
 import os
 import csv
-import copy
-import zipfile
-import recruits
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -97,96 +94,6 @@ def _diff_stats(grid_a, grid_b, mask_a, mask_b):
     )
 
 
-def prepare_comparison(dir_a, dir_b, scalars, axes, fig_height=7.0, dpi=None):
-    """Inspect NPZ headers without decompressing full grids for the RAM preview."""
-    planes = []
-    for directory in (dir_a, dir_b):
-        planes.append({(ax, idx): path for ax, idx, _, path in
-                       io_utils.find_planes(os.path.join(directory, 'NPZ')) if ax in axes})
-    matching = sorted(set(planes[0]) & set(planes[1]))
-    if not matching:
-        raise ValueError('No matching saved planes found for the selected axes.')
-    estimate = 0
-    for key in matching:
-        largest = 0
-        source_bytes = 0
-        for lookup in planes:
-            with zipfile.ZipFile(lookup[key]) as archive:
-                source_bytes += sum(i.file_size for i in archive.infolist())
-                for field in scalars:
-                    if field + '.npy' not in archive.namelist():
-                        continue
-                    with archive.open(field + '.npy') as stream:
-                        version = np.lib.format.read_magic(stream)
-                        reader = (np.lib.format.read_array_header_1_0 if version == (1, 0)
-                                  else np.lib.format.read_array_header_2_0)
-                        shape, _, _ = reader(stream)
-                    if len(shape) != 2:
-                        raise ValueError(f'Expected a 2D scalar grid: {lookup[key]} / {field}')
-                    h, w = shape
-                    largest = max(largest, recruits.estimate_recruit_bytes(
-                        [(0, max(1, w-1), 0, max(1, h-1))], 1000, len(scalars),
-                        point_count=0, fig_height=fig_height, dpi=dpi or cfg.DPI))
-        estimate = max(estimate, largest + 3 * source_bytes)
-    if estimate == 0:
-        raise ValueError('No selected scalar arrays found in matching planes.')
-    return matching, planes, estimate
-
-
-def _compare_plane(job):
-    path_a, path_b = job['paths']
-    ax_str = job['axis']
-    pidx = job['index']
-    scalars_to_run = job['scalars']
-    output_dir = job['output_dir']
-    label_a, label_b = job['labels']
-    fig_height, dpi = job['fig_height'], job['dpi']
-    delta_ranges = job['delta_ranges']
-    summary = []
-    messages = []
-
-    for skey in scalars_to_run:
-        try:
-            grid_a, grid_b, mask_a, mask_b, extent, meta = \
-                load_and_diff(path_a, path_b, skey)
-        except KeyError as e:
-            messages.append(f"[{ax_str}#{pidx:03d}] {skey}: SKIP -- {e}")
-            continue
-
-        ax_slice  = meta['plane_axis']
-        plane_val = meta['plane_value_m']
-        plane_idx = meta['plane_index']
-        val_mm    = plane_val * 1000.0
-        h_label, v_label = cfg.PLOT_LABELS[ax_slice]
-
-        stats = _diff_stats(grid_a, grid_b, mask_a, mask_b)
-        summary.append(dict(
-            axis=ax_str, plane_idx=plane_idx, val_mm=val_mm,
-            scalar=skey, label_a=label_a, label_b=label_b,
-            **stats
-        ))
-
-        # Delta PNG
-        png_dir = os.path.join(output_dir, 'PNG', skey, ax_str)
-        os.makedirs(png_dir, exist_ok=True)
-        stem = f"diff_{skey}_{ax_str}_{plane_idx:03d}_{val_mm:+.1f}mm"
-
-        fig = plotting.make_diff_plot(
-            grid_a, grid_b, mask_a, mask_b,
-            ax_slice, plane_idx, val_mm,
-            h_label, v_label, extent, skey,
-            label_a=label_a, label_b=label_b,
-            fig_height=fig_height, dpi=dpi,
-            fixed_range=delta_ranges.get(skey),
-        )
-        try:
-            fig.savefig(os.path.join(png_dir, stem + '.png'), bbox_inches='tight',
-                        facecolor=cfg.BG_COLOR, dpi=dpi or cfg.DPI)
-        finally:
-            plt.close(fig)
-    return summary, messages
-
-
 def compare_runs(dir_a, dir_b,
                  scalars=None, axes=None,
                  output_dir=None,
@@ -194,7 +101,7 @@ def compare_runs(dir_a, dir_b,
                  log_a=None, log_b=None,
                  fig_height=7.0, dpi=None,
                  delta_ranges=None,
-                 images=True, ram_budget_gb=None, max_recruits=8, progress_callback=None):
+                 images=True):
     """
     Compare two run output directories.
 
@@ -233,18 +140,20 @@ def compare_runs(dir_a, dir_b,
             f"compare_{os.path.basename(dir_b)}_vs_{os.path.basename(dir_a)}"
         )
 
-    settings = {name: copy.deepcopy(value) for name, value in vars(cfg).items() if name.isupper()}
-    def emit(event):
-        if progress_callback:
-            progress_callback(event)
-    completed = skipped = 0
     summary = []
 
     if images:
-        matching, planes, estimate = prepare_comparison(
-            dir_a, dir_b, scalars_to_run, axes_to_run, fig_height, dpi)
-        planes_a, planes_b = planes
-        budget = recruits.default_budget_gib() if ram_budget_gb is None else ram_budget_gb
+        npz_root_a = os.path.join(dir_a, 'NPZ')
+        npz_root_b = os.path.join(dir_b, 'NPZ')
+
+        planes_a = {(ax, pidx): path
+                    for ax, pidx, pmm, path
+                    in io_utils.find_planes(npz_root_a)}
+        planes_b = {(ax, pidx): path
+                    for ax, pidx, pmm, path
+                    in io_utils.find_planes(npz_root_b)}
+
+        matching = sorted(set(planes_a.keys()) & set(planes_b.keys()))
 
         print(f"Comparing {len(matching)} matching planes  scalars={scalars_to_run}")
         print(f"  {label_a}: {dir_a}")
@@ -256,30 +165,60 @@ def compare_runs(dir_a, dir_b,
             print(f"    {skey}: {'auto per-plane' if dr is None else f'fixed +/-{dr}'}")
         print()
 
-        jobs = [dict(paths=(planes_a[key], planes_b[key]), axis=key[0], index=key[1],
-                     scalars=scalars_to_run, output_dir=output_dir, labels=(label_a, label_b),
-                     fig_height=fig_height, dpi=dpi, delta_ranges=delta_ranges) for key in matching]
-        allocation = recruits.allocate_recruits(
-            budget, estimate, max_recruits=max_recruits, plane_count=len(jobs))
-        print(f'Recruits: {allocation.recruits} | estimate/recruit: {allocation.per_recruit_gib:.2f} GiB')
-        emit(dict(event='allocation', recruits=allocation.recruits, total=len(jobs),
-                  per_recruit_gib=allocation.per_recruit_gib, budget_gib=budget, estimate_bytes=estimate))
-        if allocation.recruits == 0:
-            raise MemoryError(f'Not enough RAM for one comparison recruit '
-                              f'(estimated {allocation.per_recruit_gib:.2f} GiB).')
-        ordered = {}
-        completed = skipped = 0
-        for processed, (index, (rows, messages)) in enumerate(
-                recruits.run_tasks(_compare_plane, jobs, allocation.recruits, settings), start=1):
-            ordered[index] = rows
-            completed += bool(rows)
-            skipped += not bool(rows)
-            for message in messages:
-                print(message)
-            print(f'[{processed}/{len(jobs)}] Comparison plane complete')
-            emit(dict(event='plane', processed=processed, total=len(jobs),
-                      completed=completed, skipped=skipped, recruits=allocation.recruits))
-        summary = [row for index in sorted(ordered) for row in ordered[index]]
+        for ax_str, pidx in matching:
+            if ax_str not in axes_to_run:
+                continue
+
+            path_a = planes_a[(ax_str, pidx)]
+            path_b = planes_b[(ax_str, pidx)]
+
+            for skey in scalars_to_run:
+                try:
+                    grid_a, grid_b, mask_a, mask_b, extent, meta = \
+                        load_and_diff(path_a, path_b, skey)
+                except KeyError as e:
+                    print(f"  [{ax_str}#{pidx:03d}] {skey}: SKIP -- {e}")
+                    continue
+
+                ax_slice  = meta['plane_axis']
+                plane_val = meta['plane_value_m']
+                plane_idx = meta['plane_index']
+                val_mm    = plane_val * 1000.0
+                h_label, v_label = cfg.PLOT_LABELS[ax_slice]
+
+                stats = _diff_stats(grid_a, grid_b, mask_a, mask_b)
+                summary.append(dict(
+                    axis=ax_str, plane_idx=plane_idx, val_mm=val_mm,
+                    scalar=skey, label_a=label_a, label_b=label_b,
+                    **stats
+                ))
+
+                # Delta PNG
+                png_dir = os.path.join(output_dir, 'PNG', skey, ax_str)
+                os.makedirs(png_dir, exist_ok=True)
+                stem = f"diff_{skey}_{ax_str}_{plane_idx:03d}_{val_mm:+.1f}mm"
+
+                fig = plotting.make_diff_plot(
+                    grid_a, grid_b, mask_a, mask_b,
+                    ax_slice, plane_idx, val_mm,
+                    h_label, v_label, extent, skey,
+                    label_a=label_a, label_b=label_b,
+                    fig_height=fig_height, dpi=dpi,
+                    fixed_range=delta_ranges.get(skey),
+                )
+                fig.savefig(os.path.join(png_dir, stem + '.png'),
+                            bbox_inches='tight',
+                            facecolor=cfg.BG_COLOR,
+                            dpi=dpi or cfg.DPI)
+                plt.close(fig)
+
+                range_note = (f"fixed+/-{delta_ranges[skey]}"
+                              if skey in delta_ranges and delta_ranges[skey] is not None
+                              else "auto")
+                print(f"  [{ax_str}#{plane_idx:03d}  {val_mm:+.1f}mm]  {skey}  "
+                      f"mean={stats['mean']:+.4f}  "
+                      f"max={stats['max']:+.4f}  "
+                      f"range={range_note}")
 
         # Summary CSV
         if summary:
@@ -314,5 +253,4 @@ def compare_runs(dir_a, dir_b,
             print(f"[aero_report] ERROR: {e}")
             import traceback; traceback.print_exc()
 
-    emit(dict(event='done', completed=completed, skipped=skipped))
     return summary

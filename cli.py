@@ -66,9 +66,7 @@ def cmd_run(args):
         geom_case     = args.geom     or None,
         data_case     = args.data     or None,
         output_dir    = args.out      or None,
-        resolution_mm = args.res,
-        ram_budget_gb = args.ram_gb,
-        max_recruits  = args.recruits,
+        resolution_mm = args.res      or None,
     )
 
 
@@ -85,8 +83,6 @@ def cmd_compare(args):
         log_a      = args.log_a   or None,
         log_b      = args.log_b   or None,
         images     = not args.no_images,
-        ram_budget_gb = args.ram_gb,
-        max_recruits = args.recruits,
     )
 
 
@@ -143,7 +139,7 @@ def build_parser():
     p_run.add_argument('--axes', nargs='+', choices=['X','Y','Z'],
                        metavar='AXIS',
                        help='Axes to slice (default: X Y Z)')
-    p_run.add_argument('--res', type=float, metavar='MM',
+    p_run.add_argument('--res', type=int, metavar='MM',
                        help=f'Resolution in mm/px (default: {cfg.RESOLUTION_MM})')
     p_run.add_argument('--geom', metavar='PATH',
                        help='Override geometry .case path')
@@ -151,10 +147,6 @@ def build_parser():
                        help='Override CFD data .case path')
     p_run.add_argument('--out', metavar='DIR',
                        help='Override output directory')
-    p_run.add_argument('--ram-gb', type=float, metavar='GIB',
-                       help='Estimated recruit RAM budget in GiB (default: automatic, up to 8 GiB)')
-    p_run.add_argument('--recruits', type=int, choices=range(1, 9), default=8,
-                       help='Maximum recruits, limited by RAM and CPU (default: 8; 1 for serial)')
 
     # ── compare ───────────────────────────────────────────────────
     p_cmp = sub.add_parser('compare',
@@ -181,10 +173,6 @@ def build_parser():
     p_cmp.add_argument('--no-images', action='store_true',
                        help='Skip plane-image/NPZ diffing. Use with --log-a/--log-b '
                             'to produce an aero (job) comparison on its own.')
-    p_cmp.add_argument('--ram-gb', type=float, metavar='GIB',
-                       help='Estimated recruit RAM budget in GiB')
-    p_cmp.add_argument('--recruits', type=int, choices=range(1, 9), default=8,
-                       help='Maximum comparison recruits (default: 8; 1 for serial)')
 
     # ── info ──────────────────────────────────────────────────────
     p_info = sub.add_parser('info',

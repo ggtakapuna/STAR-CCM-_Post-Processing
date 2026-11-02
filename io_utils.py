@@ -131,8 +131,8 @@ def load_plane(npz_path):
       plane_index, h_axis, v_axis,
       + one key per scalar (e.g. 'Cp', 'CpT')
     """
-    with np.load(npz_path, allow_pickle=False) as raw:
-        result = dict(raw)
+    raw = np.load(npz_path, allow_pickle=False)
+    result = dict(raw)
     # Decode bytes fields
     for key in ['h_axis', 'v_axis']:
         if key in result:

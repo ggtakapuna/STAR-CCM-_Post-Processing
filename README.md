@@ -14,46 +14,6 @@ Interpolates volumetric CFD scalar fields onto regular 2D grids across X, Y, and
 
 **Scalars supported:** Cp, CpT, Vi, Vj, Vk (and any custom array via auto-detection)
 
-### Recruits (parallel plane processing)
-The **Run** tab includes a **Recruits & RAM Budget** slider. Each recruit is an
-independent CPU process that masks, interpolates and exports one plane at a time.
-The estimated count updates with the RAM budget, resolution, selected fields,
-axes, figure size and available system memory. Up to eight recruits run at once,
-also limited by CPU availability and the number of planes. Uncheck **Use multiple
-recruits** to process one plane at a time.
-
-The slider maximum follows currently available RAM minus the system reserve,
-rounded down to 0.25 GiB, and refreshes every two seconds while idle. If available
-RAM drops below the selected budget, the selection is reduced to match. The CPU
-limit is the number of logical CPUs this process is allowed to use, capped at
-eight; it does not measure current CPU utilization.
-
-Use **Analyze RAM from input files** in either Run or Compare to calculate RAM per
-recruit from the actual inputs. Run reads the geometry size and largest selected
-plane; Compare reads saved NPZ grid headers. The GUI and execution use the same
-calculation. Until analysis finishes, the GUI asks for analysis instead of showing
-a generic memory estimate. Changing inputs invalidates the analyzed estimate;
-changing resolution updates the Run estimate from the analyzed input sizes.
-
-The pipeline recalculates the actual count after loading and staging the data,
-using the largest plane and geometry size. It reserves the greater of 2 GiB or
-15% of total RAM for the system. The budget covers estimated recruit memory;
-it is **not a hard memory cap**, and the parent process needs additional memory
-to load the EnSight files. If even one recruit does not fit, the run stops with
-an actionable error instead of exceeding the estimate deliberately.
-
-Per-plane data is staged in the system temporary directory, so adequate temporary
-disk space is required. Recruits read only their plane data and each load one copy
-of the geometry. Pending jobs are bounded by the recruit count; temporary files
-are cleaned up on success or failure. Fields share interpolation triangulations
-within each fluid region. Existing PNG and NPZ formats are retained. The Log tab
-reports the actual recruit count, completed/skipped planes and wall-clock time.
-
-Compare has the same recruit controls. Each recruit compares one matching plane
-pair across the selected scalars. The parent writes the ordered summary CSV;
-the optional aero report runs after plane processing. CLI comparisons accept
-`--ram-gb` and `--recruits` too. Aero-only comparisons (`--no-images`) use no recruits.
-
 ### Comparison Pipeline
 Computes plane-by-plane deltas between two simulation runs. Delta images use a three-colour geometry overlay:
 - **Gray** — geometry present in both runs
@@ -108,7 +68,7 @@ Range: 0 – 0.03
 ## Installation
 
 ```bash
-pip install pyvista numpy scipy matplotlib plotly pillow scikit-image psutil
+pip install pyvista numpy scipy matplotlib plotly pillow scikit-image
 ```
 
 Tkinter is included with most Python distributions. If missing:
@@ -194,12 +154,6 @@ python gui.py
 # Run slice pipeline
 python cli.py run --scalars Cp CpT --axes X Y Z --res 2
 
-# Let an estimated 4 GiB budget select up to 8 recruits
-python cli.py run --ram-gb 4 --recruits 8
-
-# Process one plane at a time
-python cli.py run --ram-gb 4 --recruits 1
-
 # Compare two runs
 python cli.py compare DIR_A DIR_B --label-a "Baseline" --label-b "Winglet"
 
@@ -266,15 +220,9 @@ The pipeline expects three types of case files:
 | `matplotlib` | Plot generation, colormaps |
 | `plotly` | Interactive 3D HTML export |
 | `pillow` | Image loading for the visualization viewer |
-| `psutil` | Available RAM and CPU limits for recruit allocation |
 | `tkinter` | Desktop GUI |
 
 Python 3.10+ required.
-
-When calling `run_pipeline()` from another Python script, place the call inside
-an `if __name__ == '__main__':` guard because recruits use spawned processes.
-`ram_budget_gb`, `max_recruits`, and an optional `progress_callback` are available
-through the Python API. Callbacks run on the calling thread.
 
 ---
 

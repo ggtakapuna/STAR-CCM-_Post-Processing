@@ -1,3 +1,17 @@
+"""
+================================================================================
+  CFD Slicer Pipeline
+  Author  : Julian G-A
+  Contributors: John Baton
+  Project : UTFR
+--------------------------------------------------------------------------------
+  test_recruits.py
+  Regression checks for recruit allocation and the slice pipeline.
+  Checks memory limits, shared-field interpolation, spawned processing and cleanup.
+  Do not distribute without permission.
+================================================================================
+"""
+
 import copy
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path

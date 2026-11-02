@@ -1,4 +1,16 @@
-"""Shared Tk controls for Run and Compare recruit allocation."""
+"""
+================================================================================
+  CFD Slicer Pipeline
+  Author  : John Baton
+  Project : UTFR
+--------------------------------------------------------------------------------
+  recruit_controls.py
+  Shared Tk controls for Run and Compare recruit allocation.
+  Displays input-based RAM estimates, resource limits and processing progress.
+  Do not distribute without permission.
+================================================================================
+"""
+
 import math
 import os
 import queue

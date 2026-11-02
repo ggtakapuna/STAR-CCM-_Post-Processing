@@ -1,3 +1,17 @@
+"""
+================================================================================
+  CFD Slicer Pipeline
+  Author  : Julian G-A
+  Contributors: John Baton
+  Project : UTFR
+--------------------------------------------------------------------------------
+  test_compare_recruits.py
+  Regression checks for comparison recruits.
+  Checks RAM estimates, serial/parallel output consistency and aero-only processing.
+  Do not distribute without permission.
+================================================================================
+"""
+
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile

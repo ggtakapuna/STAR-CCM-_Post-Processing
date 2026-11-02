@@ -1,7 +1,16 @@
-"""Shared RAM estimates and CPU limits for independent processing recruits.
-
-Budgets are advisory; native SciPy/VTK allocations vary with the input mesh.
 """
+================================================================================
+  CFD Slicer Pipeline
+  Author  : John Baton
+  Project : UTFR
+--------------------------------------------------------------------------------
+  recruits.py
+  Shared RAM estimates and CPU limits for independent processing recruits.
+  Budgets are advisory; native SciPy/VTK allocations vary with the input mesh.
+  Do not distribute without permission.
+================================================================================
+"""
+
 from dataclasses import dataclass
 import math
 import os

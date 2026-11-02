@@ -2,6 +2,7 @@
 ================================================================================
   CFD Slicer Pipeline
   Author  : Julian G-A
+  Contributors: John Baton
   Project : UTFR
 --------------------------------------------------------------------------------
   Slice, interpolate and compare STAR-CCM+ EnSight Gold exports.

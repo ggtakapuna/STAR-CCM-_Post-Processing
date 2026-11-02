@@ -1,7 +1,8 @@
-# UT26 CFD Post-Processing Pipeline
+# UT27 CFD Post-Processing Pipeline
 **Author:** Julian G-A  
+**Contributors:** John Baton  
 **Team:** University of Toronto Formula Racing (UTFR)  
-**Vehicle:** UT26 Formula SAE
+**Vehicle:** UT27 Formula SAE
 
 A desktop application and Python pipeline for post-processing STAR-CCM+ aerodynamic simulation data exported in EnSight Gold format.
 

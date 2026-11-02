@@ -2,6 +2,7 @@
 ================================================================================
   CFD Slicer Pipeline
   Author  : Julian G-A
+  Contributors: John Baton
   Project : UTFR
 --------------------------------------------------------------------------------
   Slice, interpolate and compare STAR-CCM+ EnSight Gold exports.
@@ -904,7 +905,7 @@ def export_interactive_html(prepared, scalar_key, cmap=None,
     fig = go.Figure(data=traces)
     fig.update_layout(
         title=dict(
-            text=(f'UT26 — Surface {label}  |  '
+            text=(f'UT27 — Surface {label}  |  '
                   f'drag to rotate  ·  scroll to zoom  ·  '
                   f'click legend to toggle parts'),
             font=dict(size=13)),

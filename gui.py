@@ -14,9 +14,12 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
 import sys
 import os
+import math
+import queue
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as cfg
+import recruits
 
 # ══════════════════════════════════════════════════════════════════
 #  STYLE
@@ -138,14 +141,23 @@ def section_label(parent, text, row, col=0, colspan=3):
 class LogRedirector:
     def __init__(self, widget, original):
         self.widget = widget; self.original = original
+        self.pending = queue.Queue()
+        self.widget.after(100, self._drain)
     def write(self, text):
         self.original.write(text)
+        self.pending.put(text)
+    def _drain(self):
         try:
-            self.widget.configure(state="normal")
-            self.widget.insert("end", text)
-            self.widget.see("end")
-            self.widget.configure(state="disabled")
-        except Exception:
+            chunks = []
+            while not self.pending.empty():
+                chunks.append(self.pending.get_nowait())
+            if chunks:
+                self.widget.configure(state="normal")
+                self.widget.insert("end", "".join(chunks))
+                self.widget.see("end")
+                self.widget.configure(state="disabled")
+            self.widget.after(100, self._drain)
+        except tk.TclError:
             pass
     def flush(self): self.original.flush()
 
@@ -207,7 +219,10 @@ class RunTab(ScrollableFrame):
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
+        self._running = False
+        self._events = queue.Queue()
         self._build(self.inner)
+        self.after(2000, self._refresh_resources)
 
     def _build(self, f):
         f.columnconfigure(1, weight=1)
@@ -238,7 +253,8 @@ class RunTab(ScrollableFrame):
         af.grid(row=r, column=1, sticky="w", padx=PAD)
         for ax in ['X', 'Y', 'Z']:
             v = tk.BooleanVar(value=True); self.axis_vars[ax] = v
-            tk.Checkbutton(af, text=ax, variable=v, font=FONT, bg=BG)\
+            tk.Checkbutton(af, text=ax, variable=v, font=FONT, bg=BG,
+                           command=self._update_allocation)\
                 .pack(side="left", padx=PAD)
         r += 1
 
@@ -271,12 +287,130 @@ class RunTab(ScrollableFrame):
         tk.Entry(f, textvariable=self.v_dpi, width=6, font=FONT)\
             .grid(row=r, column=1, sticky="w", padx=PAD, pady=PAD_SM); r += 1
 
+        r = self._build_recruit_controls(f, r)
+        self.v_res.trace_add("write", lambda *_: self._update_allocation())
+        self._update_allocation()
+
         bf = tk.Frame(f, bg=BG)
         bf.grid(row=r, column=0, columnspan=3, pady=PAD*2, padx=PAD, sticky="e")
-        tk.Button(bf, text="Run Pipeline", command=self._run,
-                  **BTN_RUN).pack(side="right")
+        self.run_button = tk.Button(bf, text="Run Pipeline", command=self._run, **BTN_RUN)
+        self.run_button.pack(side="right")
         self.status_lbl = tk.Label(bf, text="", font=FONT, bg=BG, fg="#555")
         self.status_lbl.pack(side="right", padx=PAD)
+
+    def _build_recruit_controls(self, f, r):
+        section_label(f, "Recruits & RAM Budget", r); r += 2
+        self.v_parallel = tk.BooleanVar(value=True)
+        self.parallel_check = tk.Checkbutton(
+            f, text="Use multiple recruits (up to 8 planes at once)",
+            variable=self.v_parallel, command=self._update_allocation, font=FONT, bg=BG)
+        self.parallel_check.grid(row=r, column=0, columnspan=3, sticky="w", padx=PAD)
+        r += 1
+        resources = recruits.system_resources()
+        ram_max = math.floor(max(0, resources.available - recruits.reserve_bytes(resources))
+                             / recruits.GIB * 4) / 4
+        self.v_ram = tk.DoubleVar(value=min(ram_max, math.floor(
+            recruits.default_budget_gib(resources) * 4) / 4))
+        tk.Label(f, text="RAM budget (GiB)", font=FONT, bg=BG).grid(
+            row=r, column=0, sticky="w", padx=PAD)
+        self.ram_slider = tk.Scale(
+            f, from_=0, to=ram_max,
+            resolution=0.25, orient="horizontal", variable=self.v_ram,
+            bg=BG, highlightthickness=0)
+        self.ram_slider.grid(row=r, column=1, columnspan=2, sticky="ew", padx=PAD)
+        r += 1
+        self.allocation_lbl = tk.Label(f, text="", font=FONT_B, bg=BG, fg=ACCENT,
+                                       justify="left", anchor="w", wraplength=650)
+        self.allocation_lbl.grid(row=r, column=0, columnspan=3, sticky="ew", padx=PAD)
+        r += 1
+        tk.Label(f, text="Each recruit processes one plane and all selected scalars.\n"
+                 "RAM is an estimate, not a hard limit. The count is recalculated after loading;\n"
+                 "the parent process also needs memory to load the case files.",
+                 font=FONT, bg=BG, fg="#555", justify="left", wraplength=650).grid(
+                     row=r, column=0, columnspan=3, sticky="w", padx=PAD, pady=PAD_SM)
+        r += 1
+        self.progress = ttk.Progressbar(f, mode="determinate")
+        self.progress.grid(row=r, column=0, columnspan=3, sticky="ew", padx=PAD, pady=PAD_SM)
+        r += 1
+        self.analyze_button = tk.Button(f, text="Analyze RAM from input files", command=self._analyze_ram,
+                                        **BTN_SEC)
+        self.analyze_button.grid(row=r, column=0, columnspan=3, sticky="w", padx=PAD, pady=PAD_SM)
+        r += 1
+        self._memory_profile = None
+        self._analyzing = False
+        self._analysis_events = queue.Queue()
+        for variable in (self.v_ram, self.v_figh, self.v_dpi):
+            variable.trace_add("write", lambda *_: self._update_allocation())
+        return r
+
+
+    def _profile_key(self):
+        paths = ((self.v_dir_a.get(), self.v_dir_b.get()) if getattr(self, '_comparison', False)
+                 else (self.v_geom.get(), self.v_data.get()))
+        scalars = tuple(k for k, v in self.scalar_vars.items() if v.get())
+        axes = tuple(k for k, v in self.axis_vars.items() if v.get())
+        stamps = tuple(os.path.getmtime(p) if os.path.isfile(p) else None for p in paths)
+        return (paths, scalars, axes, stamps, repr(cfg.CAR_BOUNDS_2D), repr(cfg.SCALARS),
+                self.v_figh.get(), self.v_dpi.get())
+
+    def _analyze_ram(self):
+        if self._running or self._analyzing:
+            return
+        key = self._profile_key()
+        paths, scalars, axes = key[:3]
+        if not all(paths) or not scalars or not axes:
+            messagebox.showwarning("Missing inputs", "Choose both input paths, scalars and axes.")
+            return
+        try:
+            figh, dpi = float(self.v_figh.get()), int(self.v_dpi.get())
+            if not math.isfinite(figh) or figh <= 0 or dpi <= 0:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("Invalid size", "Use positive figure height and DPI.")
+            return
+        self._analyzing = True
+        self.analyze_button.config(state='disabled')
+        self.run_button.config(state='disabled')
+        self.allocation_lbl.config(text="Analyzing input sizes...", fg=ACCENT)
+        def analyze():
+            try:
+                if getattr(self, '_comparison', False):
+                    import compare
+                    _, _, estimate = compare.prepare_comparison(*paths, scalars, axes, figh, dpi)
+                    profile = dict(estimate_bytes=estimate)
+                else:
+                    import pipeline
+                    profile = pipeline.inspect_recruit_memory(*paths, scalars, axes)
+                self._analysis_events.put((key, profile, None))
+            except Exception as exc:
+                self._analysis_events.put((key, None, str(exc)))
+        threading.Thread(target=analyze, daemon=True).start()
+        self.after(100, self._poll_analysis)
+
+    def _poll_analysis(self):
+        try:
+            key, profile, error = self._analysis_events.get_nowait()
+        except queue.Empty:
+            self.after(100, self._poll_analysis)
+            return
+        self._analyzing = False
+        self.analyze_button.config(state='normal')
+        self.run_button.config(state='normal')
+        if error:
+            self.allocation_lbl.config(text=f"RAM analysis failed: {error}", fg="#C62828")
+        else:
+            self._memory_profile = (key, profile)
+            self._update_allocation()
+
+    def _estimate_memory(self, bounds, scalar_count):
+        if self._memory_profile is None or self._memory_profile[0] != self._profile_key():
+            raise ValueError("Analyze RAM from input files to calculate RAM per recruit and recruit count.")
+        profile = self._memory_profile[1]
+        if 'estimate_bytes' in profile:
+            return profile['estimate_bytes']
+        return recruits.estimate_recruit_bytes(
+            bounds, float(self.v_res.get()), scalar_count, **profile,
+            fig_height=float(self.v_figh.get()), dpi=int(self.v_dpi.get()))
 
     def _rebuild_scalar_checks(self):
         for w in self.scalar_frame.winfo_children(): w.destroy()
@@ -284,12 +418,89 @@ class RunTab(ScrollableFrame):
         for skey in cfg.SCALARS:
             v = tk.BooleanVar(value=True); self.scalar_vars[skey] = v
             tk.Checkbutton(self.scalar_frame, text=skey, variable=v,
-                           font=FONT, bg=BG).pack(side="left", padx=PAD)
+                           font=FONT, bg=BG, command=self._update_allocation).pack(side="left", padx=PAD)
 
     def refresh_scalars(self):
         self._rebuild_scalar_checks()
+        self._update_allocation()
+
+    def _refresh_resources(self):
+        self._update_allocation()
+        self.after(2000, self._refresh_resources)
+
+    def _update_allocation(self):
+        if (not hasattr(self, 'allocation_lbl') or self._running or
+                getattr(self, '_updating_allocation', False) or getattr(self, '_analyzing', False)):
+            return
+        self._updating_allocation = True
+        try:
+            resources = recruits.system_resources()
+            ram_max = math.floor(max(0, resources.available - recruits.reserve_bytes(resources))
+                                 / recruits.GIB * 4) / 4
+            self.ram_slider.config(to=ram_max)
+            if self.v_ram.get() > ram_max:
+                self.v_ram.set(ram_max)
+            if self.v_ram.get() <= 0:
+                raise ValueError("No RAM budget selected or available after the system reserve.")
+            bounds = [cfg.CAR_BOUNDS_2D[a] for a in range(3)
+                      if self.axis_vars[cfg.AXIS_LABEL[a]].get()]
+            scalar_count = sum(v.get() for v in self.scalar_vars.values())
+            if not bounds or not scalar_count:
+                raise ValueError("Select scalars and axes to estimate recruits.")
+            estimate = self._estimate_memory(bounds, scalar_count)
+            allocation = recruits.allocate_recruits(
+                self.v_ram.get(), estimate, resources=resources,
+                max_recruits=8 if self.v_parallel.get() else 1)
+            text = (f"Estimated recruits: {allocation.recruits}  |  "
+                    f"Budget: {allocation.budget_gib:.2f} GiB  |  "
+                    f"~{allocation.per_recruit_gib:.2f} GiB per recruit\n"
+                    f"Available: {resources.available / recruits.GIB:.1f} GiB  |  "
+                    f"System reserve: {allocation.reserve_gib:.1f} GiB  |  "
+                    f"CPU limit: {min(8, resources.cpus)} ({resources.cpus} logical CPUs available)\n"
+                    f"Maximum budget now: {ram_max:.2f} GiB")
+            if allocation.recruits == 0:
+                text += "\nInsufficient budget or available RAM; increase budget or use a coarser resolution."
+            self.allocation_lbl.config(text=text, fg=ACCENT if allocation.recruits else "#C62828")
+        except (ValueError, OverflowError, tk.TclError) as exc:
+            self.allocation_lbl.config(text=str(exc), fg="#C62828")
+        finally:
+            self._updating_allocation = False
+
+    def _poll_run(self):
+        while not self._events.empty():
+            event = self._events.get_nowait()
+            kind = event['event']
+            if kind == 'allocation':
+                profile = ({k: event[k] for k in ('point_count', 'geometry_bytes')}
+                           if 'point_count' in event else dict(estimate_bytes=event['estimate_bytes']))
+                self._memory_profile = (self._run_key, profile)
+                self.allocation_lbl.config(
+                    text=f"Running with {event['recruits']} recruits  |  "
+                         f"~{event['per_recruit_gib']:.2f} GiB per recruit  |  "
+                         f"{event['total']} planes", fg=ACCENT)
+                self.progress.config(maximum=event['total'], value=0)
+            elif kind == 'plane':
+                self.progress.config(value=event['processed'])
+                self.status_lbl.config(text=f"{event['processed']}/{event['total']} planes | "
+                                            f"{event['recruits']} recruits")
+            elif kind in ('done', 'error'):
+                self._running = False
+                self.run_button.config(state='normal')
+                self.ram_slider.config(state='normal')
+                self.parallel_check.config(state='normal')
+                self.analyze_button.config(state='normal')
+                if kind == 'done':
+                    self.status_lbl.config(text=f"Done: {event['completed']} saved, "
+                                                f"{event['skipped']} skipped", fg="#2E7D32")
+                else:
+                    self.status_lbl.config(text="Error — see Log", fg="#C62828")
+                    messagebox.showerror("Pipeline error", event['message'])
+        if self._running:
+            self.after(100, self._poll_run)
 
     def _run(self):
+        if self._running or self._analyzing:
+            return
         scalars = [k for k, v in self.scalar_vars.items() if v.get()]
         axes    = [k for k, v in self.axis_vars.items()   if v.get()]
         if not scalars:
@@ -297,22 +508,37 @@ class RunTab(ScrollableFrame):
         if not axes:
             messagebox.showwarning("Nothing to do", "Select at least one axis."); return
         try:
-            res = float(self.v_res.get()); assert res > 0
+            res = float(self.v_res.get()); assert math.isfinite(res) and res > 0
         except:
             messagebox.showerror("Invalid resolution",
                                  "mm per pixel must be a positive number."); return
         try:
             figh = float(self.v_figh.get()); dpi = int(self.v_dpi.get())
+            assert math.isfinite(figh) and figh > 0 and dpi > 0
         except:
             messagebox.showerror("Invalid size",
-                                 "Figure height and DPI must be numbers."); return
+                                 "Figure height and DPI must be positive numbers."); return
+
+        paths = dict(geom_case=self.v_geom.get(), data_case=self.v_data.get(),
+                     output_dir=self.v_out.get())
+        if not all(paths.values()):
+            messagebox.showerror("Missing paths", "Choose geometry, CFD data and output paths."); return
+        budget = self.v_ram.get()
+        limit = 8 if self.v_parallel.get() else 1
 
         cfg.GEOMETRY_CASE = self.v_geom.get()
         cfg.DATA_CASE     = self.v_data.get()
         cfg.OUTPUT_DIR    = self.v_out.get()
         cfg.DPI           = dpi
 
-        self.status_lbl.config(text="Running...", fg=ACCENT)
+        self._run_key = self._profile_key()
+        self._running = True
+        self.analyze_button.config(state='disabled')
+        self.run_button.config(state='disabled')
+        self.ram_slider.config(state='disabled')
+        self.parallel_check.config(state='disabled')
+        self.progress.config(value=0)
+        self.status_lbl.config(text="Loading / staging...", fg=ACCENT)
         self.app.notebook.select(self.app.log_tab)
 
         def _worker():
@@ -320,13 +546,15 @@ class RunTab(ScrollableFrame):
                 import pipeline
                 pipeline.run_pipeline(scalars=scalars, axes=axes,
                                        resolution_mm=res,
-                                       fig_height=figh, dpi=dpi)
-                self.status_lbl.config(text="Done", fg="#2E7D32")
+                                       fig_height=figh, dpi=dpi, **paths,
+                                       ram_budget_gb=budget, max_recruits=limit,
+                                       progress_callback=self._events.put)
             except Exception as exc:
-                self.status_lbl.config(text="Error", fg="#C62828")
+                self._events.put(dict(event='error', message=str(exc)))
                 print(f"\n[ERROR] {exc}")
                 import traceback; traceback.print_exc()
         threading.Thread(target=_worker, daemon=True).start()
+        self.after(100, self._poll_run)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -334,10 +562,23 @@ class RunTab(ScrollableFrame):
 # ══════════════════════════════════════════════════════════════════
 
 class CompareTab(ScrollableFrame):
+    _comparison = True
+    _build_recruit_controls = RunTab._build_recruit_controls
+    _profile_key = RunTab._profile_key
+    _analyze_ram = RunTab._analyze_ram
+    _poll_analysis = RunTab._poll_analysis
+    _estimate_memory = RunTab._estimate_memory
+    _refresh_resources = RunTab._refresh_resources
+    _update_allocation = RunTab._update_allocation
+    _poll_run = RunTab._poll_run
+
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
+        self._running = False
+        self._events = queue.Queue()
         self._build(self.inner)
+        self.after(2000, self._refresh_resources)
 
     def _build(self, f):
         f.columnconfigure(1, weight=1)
@@ -428,11 +669,14 @@ class CompareTab(ScrollableFrame):
             .grid(row=r, column=0, columnspan=3, sticky="w",
                   padx=PAD, pady=PAD_SM); r += 1
 
+        r = self._build_recruit_controls(f, r)
+        self._update_allocation()
+
         bf = tk.Frame(f, bg=BG)
         bf.grid(row=r, column=0, columnspan=3,
                 pady=PAD*2, padx=PAD, sticky="e")
-        tk.Button(bf, text="Run Comparison", command=self._run,
-                  **BTN_RUN).pack(side="right")
+        self.run_button = tk.Button(bf, text="Run Comparison", command=self._run, **BTN_RUN)
+        self.run_button.pack(side="right")
         self.status_lbl = tk.Label(bf, text="", font=FONT, bg=BG, fg="#555")
         self.status_lbl.pack(side="right", padx=PAD)
 
@@ -442,7 +686,7 @@ class CompareTab(ScrollableFrame):
         for skey in cfg.SCALARS:
             v = tk.BooleanVar(value=True); self.scalar_vars[skey] = v
             tk.Checkbutton(self.scalar_frame, text=skey, variable=v,
-                           font=FONT, bg=BG).pack(side="left", padx=PAD)
+                           font=FONT, bg=BG, command=self._update_allocation).pack(side="left", padx=PAD)
 
     def _rebuild_range_rows(self, f=None):
         if f is None:
@@ -507,6 +751,8 @@ class CompareTab(ScrollableFrame):
         return result
 
     def _run(self):
+        if self._running or self._analyzing:
+            return
         dir_a = self.v_dir_a.get().strip()
         dir_b = self.v_dir_b.get().strip()
         if not dir_a or not dir_b:
@@ -515,6 +761,7 @@ class CompareTab(ScrollableFrame):
         axes    = [k for k, v in self.axis_vars.items()   if v.get()]
         try:
             figh = float(self.v_figh.get()); dpi = int(self.v_dpi.get())
+            assert math.isfinite(figh) and figh > 0 and dpi > 0
         except:
             messagebox.showerror("Invalid size",
                                  "Figure height and DPI must be numbers."); return
@@ -527,6 +774,19 @@ class CompareTab(ScrollableFrame):
                 "Provide both log files or uncheck 'Generate aero report'.")
             return
         out_dir = self.v_out.get().strip() or None
+        if not scalars or not axes:
+            messagebox.showwarning("Nothing to compare", "Select scalars and axes.")
+            return
+        labels = (self.v_label_a.get() or "Run A", self.v_label_b.get() or "Run B")
+        use_aero = self.v_aero.get()
+        budget, limit = self.v_ram.get(), 8 if self.v_parallel.get() else 1
+        self._run_key = self._profile_key()
+        self._running = True
+        self.run_button.config(state='disabled')
+        self.analyze_button.config(state='disabled')
+        self.ram_slider.config(state='disabled')
+        self.parallel_check.config(state='disabled')
+        self.progress.config(value=0)
         self.status_lbl.config(text="Running...", fg=ACCENT)
         self.app.notebook.select(self.app.log_tab)
 
@@ -537,19 +797,20 @@ class CompareTab(ScrollableFrame):
                     dir_a=dir_a, dir_b=dir_b,
                     scalars=scalars or None, axes=axes or None,
                     output_dir=out_dir,
-                    label_a=self.v_label_a.get() or "Run A",
-                    label_b=self.v_label_b.get() or "Run B",
-                    log_a=log_a if self.v_aero.get() else None,
-                    log_b=log_b if self.v_aero.get() else None,
+                    label_a=labels[0],
+                    label_b=labels[1],
+                    log_a=log_a if use_aero else None,
+                    log_b=log_b if use_aero else None,
                     fig_height=figh, dpi=dpi,
-                    delta_ranges=delta_ranges,
+                    delta_ranges=delta_ranges, ram_budget_gb=budget, max_recruits=limit,
+                    progress_callback=self._events.put,
                 )
-                self.status_lbl.config(text="Done", fg="#2E7D32")
             except Exception as exc:
-                self.status_lbl.config(text="Error", fg="#C62828")
+                self._events.put(dict(event="error", message=str(exc)))
                 print(f"\n[ERROR] {exc}")
                 import traceback; traceback.print_exc()
         threading.Thread(target=_worker, daemon=True).start()
+        self.after(100, self._poll_run)
 
 
 # ══════════════════════════════════════════════════════════════════

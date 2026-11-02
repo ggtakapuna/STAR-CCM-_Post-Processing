@@ -14,6 +14,41 @@ Interpolates volumetric CFD scalar fields onto regular 2D grids across X, Y, and
 
 **Scalars supported:** Cp, CpT, Vi, Vj, Vk (and any custom array via auto-detection)
 
+### Recruits (parallel processing)
+The **Run** and **Compare** tabs include **Recruits & RAM Budget** controls.
+Each recruit is an independent CPU process handling one plane, or one matching
+plane pair for comparison, across all selected scalars. Up to eight recruits run
+at once, limited by RAM, the logical CPUs available to this process, and the
+number of planes. Uncheck **Use multiple recruits** to process one at a time.
+
+The RAM slider maximum is currently available RAM minus the greater of 2 GiB or
+15% of total RAM, rounded down to 0.25 GiB. It refreshes every two seconds while
+idle and reduces the selection if available RAM falls. The CPU limit uses process
+CPU affinity, with the system logical CPU count as fallback, capped at eight;
+it does not measure current CPU utilization.
+
+Click **Analyze RAM from input files** to calculate memory per recruit from the
+actual inputs. Run reads the geometry size and largest selected plane; Compare
+reads saved NPZ grid headers. The GUI and execution use the same calculation.
+Until analysis finishes, the GUI asks for analysis instead of showing a generic
+memory estimate. Changing inputs invalidates the analysis; changing Run resolution
+updates its estimate using the analyzed input sizes. Execution reports the actual
+recruit count and memory estimate in the GUI and Log tab.
+
+RAM is an estimated processing budget, **not a hard memory cap**. The parent
+process also needs memory to load EnSight files. Allocation is checked again
+after loading; if even one recruit does not fit, the run stops with an error.
+
+Run stages per-plane data in the system temporary directory, requiring adequate
+temporary disk space. Recruits read their own plane data and each load one copy of
+the geometry. Pending jobs are bounded by the recruit count; temporary files are
+cleaned up after success or failure. Fields share interpolation triangulations
+within each fluid region. Existing PNG and NPZ formats are retained.
+
+Compare recruits produce delta PNGs and statistics for matching plane pairs.
+The parent writes the summary CSV in a consistent order and then generates the
+optional aero report. Aero-only CLI comparisons use no recruits.
+
 ### Comparison Pipeline
 Computes plane-by-plane deltas between two simulation runs. Delta images use a three-colour geometry overlay:
 - **Gray** — geometry present in both runs
@@ -68,7 +103,7 @@ Range: 0 – 0.03
 ## Installation
 
 ```bash
-pip install pyvista numpy scipy matplotlib plotly pillow scikit-image
+pip install pyvista numpy scipy matplotlib plotly pillow scikit-image psutil
 ```
 
 Tkinter is included with most Python distributions. If missing:
@@ -154,8 +189,17 @@ python gui.py
 # Run slice pipeline
 python cli.py run --scalars Cp CpT --axes X Y Z --res 2
 
+# Automatically choose up to eight recruits within an estimated 4 GiB budget
+python cli.py run --ram-gb 4 --recruits 8
+
+# Process one plane at a time
+python cli.py run --ram-gb 4 --recruits 1
+
 # Compare two runs
 python cli.py compare DIR_A DIR_B --label-a "Baseline" --label-b "Winglet"
+
+# Compare plane pairs in parallel with the same RAM/CPU allocation rules
+python cli.py compare DIR_A DIR_B --ram-gb 4 --recruits 8
 
 # Inspect a saved plane
 python cli.py info path/to/plane.npz
@@ -220,9 +264,18 @@ The pipeline expects three types of case files:
 | `matplotlib` | Plot generation, colormaps |
 | `plotly` | Interactive 3D HTML export |
 | `pillow` | Image loading for the visualization viewer |
+| `psutil` | Available RAM and CPU limits for recruit allocation |
 | `tkinter` | Desktop GUI |
 
 Python 3.10+ required.
+
+Python callers can pass `ram_budget_gb`, `max_recruits` and `progress_callback`
+to `run_pipeline()` and `compare_runs()`. Callbacks receive allocation, plane and
+done event dictionaries on the calling thread; GUI callers must marshal them to
+the Tk thread. Place calls inside an `if __name__ == '__main__':` guard because
+recruits use spawned processes, including on Windows.
+
+Run the regression checks with `python -m unittest discover -s tests -v`.
 
 ---
 

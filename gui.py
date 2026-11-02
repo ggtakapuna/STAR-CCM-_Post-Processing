@@ -12,11 +12,14 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
+import queue
+import math
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as cfg
+from recruit_controls import RecruitControls
 
 # ══════════════════════════════════════════════════════════════════
 #  STYLE
@@ -137,17 +140,29 @@ def section_label(parent, text, row, col=0, colspan=3):
 
 class LogRedirector:
     def __init__(self, widget, original):
-        self.widget = widget; self.original = original
+        self.widget, self.original = widget, original
+        self.pending = queue.Queue()
+        self.widget.after(100, self._drain)
     def write(self, text):
-        self.original.write(text)
+        if self.original is not None:
+            self.original.write(text)
+        self.pending.put(text)
+    def _drain(self):
         try:
-            self.widget.configure(state="normal")
-            self.widget.insert("end", text)
-            self.widget.see("end")
-            self.widget.configure(state="disabled")
-        except Exception:
+            chunks = []
+            while not self.pending.empty():
+                chunks.append(self.pending.get_nowait())
+            if chunks:
+                self.widget.configure(state='normal')
+                self.widget.insert('end', ''.join(chunks))
+                self.widget.see('end')
+                self.widget.configure(state='disabled')
+            self.widget.after(100, self._drain)
+        except tk.TclError:
             pass
-    def flush(self): self.original.flush()
+    def flush(self):
+        if self.original is not None:
+            self.original.flush()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -203,10 +218,11 @@ class ScalarEditor(tk.Toplevel):
 #  TAB: RUN
 # ══════════════════════════════════════════════════════════════════
 
-class RunTab(ScrollableFrame):
+class RunTab(RecruitControls, ScrollableFrame):
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
+        self._init_recruits()
         self._build(self.inner)
 
     def _build(self, f):
@@ -238,7 +254,7 @@ class RunTab(ScrollableFrame):
         af.grid(row=r, column=1, sticky="w", padx=PAD)
         for ax in ['X', 'Y', 'Z']:
             v = tk.BooleanVar(value=True); self.axis_vars[ax] = v
-            tk.Checkbutton(af, text=ax, variable=v, font=FONT, bg=BG)\
+            tk.Checkbutton(af, text=ax, variable=v, font=FONT, bg=BG, command=self._update_allocation)\
                 .pack(side="left", padx=PAD)
         r += 1
 
@@ -271,10 +287,12 @@ class RunTab(ScrollableFrame):
         tk.Entry(f, textvariable=self.v_dpi, width=6, font=FONT)\
             .grid(row=r, column=1, sticky="w", padx=PAD, pady=PAD_SM); r += 1
 
+        r = self._build_recruit_controls(f, r)
+        self.v_res.trace_add('write', lambda *_: self._update_allocation())
         bf = tk.Frame(f, bg=BG)
         bf.grid(row=r, column=0, columnspan=3, pady=PAD*2, padx=PAD, sticky="e")
-        tk.Button(bf, text="Run Pipeline", command=self._run,
-                  **BTN_RUN).pack(side="right")
+        self.run_button = tk.Button(bf, text="Run Pipeline", command=self._run, **BTN_RUN)
+        self.run_button.pack(side="right")
         self.status_lbl = tk.Label(bf, text="", font=FONT, bg=BG, fg="#555")
         self.status_lbl.pack(side="right", padx=PAD)
 
@@ -284,12 +302,14 @@ class RunTab(ScrollableFrame):
         for skey in cfg.SCALARS:
             v = tk.BooleanVar(value=True); self.scalar_vars[skey] = v
             tk.Checkbutton(self.scalar_frame, text=skey, variable=v,
-                           font=FONT, bg=BG).pack(side="left", padx=PAD)
+                           font=FONT, bg=BG, command=self._update_allocation).pack(side="left", padx=PAD)
 
     def refresh_scalars(self):
         self._rebuild_scalar_checks()
 
     def _run(self):
+        if self._running or self._analyzing:
+            return
         scalars = [k for k, v in self.scalar_vars.items() if v.get()]
         axes    = [k for k, v in self.axis_vars.items()   if v.get()]
         if not scalars:
@@ -297,33 +317,39 @@ class RunTab(ScrollableFrame):
         if not axes:
             messagebox.showwarning("Nothing to do", "Select at least one axis."); return
         try:
-            res = float(self.v_res.get()); assert res > 0
+            res = float(self.v_res.get()); assert math.isfinite(res) and res > 0
         except:
             messagebox.showerror("Invalid resolution",
                                  "mm per pixel must be a positive number."); return
         try:
             figh = float(self.v_figh.get()); dpi = int(self.v_dpi.get())
+            assert math.isfinite(figh) and figh > 0 and dpi > 0
         except:
             messagebox.showerror("Invalid size",
                                  "Figure height and DPI must be numbers."); return
 
+        paths = dict(geom_case=self.v_geom.get(), data_case=self.v_data.get(), output_dir=self.v_out.get())
+        if not all(paths.values()):
+            messagebox.showerror("Missing paths", "Choose geometry, CFD data and output paths.")
+            return
+        budget, limit = self.v_ram.get(), 8 if self.v_parallel.get() else 1
         cfg.GEOMETRY_CASE = self.v_geom.get()
         cfg.DATA_CASE     = self.v_data.get()
         cfg.OUTPUT_DIR    = self.v_out.get()
         cfg.DPI           = dpi
 
-        self.status_lbl.config(text="Running...", fg=ACCENT)
-        self.app.notebook.select(self.app.log_tab)
+        self._start_recruit_run()
 
         def _worker():
             try:
                 import pipeline
                 pipeline.run_pipeline(scalars=scalars, axes=axes,
                                        resolution_mm=res,
-                                       fig_height=figh, dpi=dpi)
-                self.status_lbl.config(text="Done", fg="#2E7D32")
+                                       fig_height=figh, dpi=dpi, **paths,
+                                       ram_budget_gb=budget, max_recruits=limit,
+                                       progress_callback=self._events.put)
             except Exception as exc:
-                self.status_lbl.config(text="Error", fg="#C62828")
+                self._events.put(dict(event="error", message=str(exc)))
                 print(f"\n[ERROR] {exc}")
                 import traceback; traceback.print_exc()
         threading.Thread(target=_worker, daemon=True).start()
@@ -333,10 +359,13 @@ class RunTab(ScrollableFrame):
 #  TAB: COMPARE
 # ══════════════════════════════════════════════════════════════════
 
-class CompareTab(ScrollableFrame):
+class CompareTab(RecruitControls, ScrollableFrame):
+    _comparison = True
+
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
+        self._init_recruits()
         self._build(self.inner)
 
     def _build(self, f):
@@ -371,7 +400,7 @@ class CompareTab(ScrollableFrame):
         af.grid(row=r, column=1, sticky="w", padx=PAD)
         for ax in ['X', 'Y', 'Z']:
             v = tk.BooleanVar(value=True); self.axis_vars[ax] = v
-            tk.Checkbutton(af, text=ax, variable=v, font=FONT, bg=BG)\
+            tk.Checkbutton(af, text=ax, variable=v, font=FONT, bg=BG, command=self._update_allocation)\
                 .pack(side="left", padx=PAD)
         r += 1
 
@@ -428,11 +457,12 @@ class CompareTab(ScrollableFrame):
             .grid(row=r, column=0, columnspan=3, sticky="w",
                   padx=PAD, pady=PAD_SM); r += 1
 
+        r = self._build_recruit_controls(f, r)
         bf = tk.Frame(f, bg=BG)
         bf.grid(row=r, column=0, columnspan=3,
                 pady=PAD*2, padx=PAD, sticky="e")
-        tk.Button(bf, text="Run Comparison", command=self._run,
-                  **BTN_RUN).pack(side="right")
+        self.run_button = tk.Button(bf, text="Run Comparison", command=self._run, **BTN_RUN)
+        self.run_button.pack(side="right")
         self.status_lbl = tk.Label(bf, text="", font=FONT, bg=BG, fg="#555")
         self.status_lbl.pack(side="right", padx=PAD)
 
@@ -442,7 +472,7 @@ class CompareTab(ScrollableFrame):
         for skey in cfg.SCALARS:
             v = tk.BooleanVar(value=True); self.scalar_vars[skey] = v
             tk.Checkbutton(self.scalar_frame, text=skey, variable=v,
-                           font=FONT, bg=BG).pack(side="left", padx=PAD)
+                           font=FONT, bg=BG, command=self._update_allocation).pack(side="left", padx=PAD)
 
     def _rebuild_range_rows(self, f=None):
         if f is None:
@@ -507,6 +537,8 @@ class CompareTab(ScrollableFrame):
         return result
 
     def _run(self):
+        if self._running or self._analyzing:
+            return
         dir_a = self.v_dir_a.get().strip()
         dir_b = self.v_dir_b.get().strip()
         if not dir_a or not dir_b:
@@ -515,6 +547,7 @@ class CompareTab(ScrollableFrame):
         axes    = [k for k, v in self.axis_vars.items()   if v.get()]
         try:
             figh = float(self.v_figh.get()); dpi = int(self.v_dpi.get())
+            assert math.isfinite(figh) and figh > 0 and dpi > 0
         except:
             messagebox.showerror("Invalid size",
                                  "Figure height and DPI must be numbers."); return
@@ -527,8 +560,13 @@ class CompareTab(ScrollableFrame):
                 "Provide both log files or uncheck 'Generate aero report'.")
             return
         out_dir = self.v_out.get().strip() or None
-        self.status_lbl.config(text="Running...", fg=ACCENT)
-        self.app.notebook.select(self.app.log_tab)
+        if not scalars or not axes:
+            messagebox.showwarning("Nothing to compare", "Select scalars and axes.")
+            return
+        labels = (self.v_label_a.get() or "Run A", self.v_label_b.get() or "Run B")
+        use_aero = self.v_aero.get()
+        budget, limit = self.v_ram.get(), 8 if self.v_parallel.get() else 1
+        self._start_recruit_run()
 
         def _worker():
             try:
@@ -537,16 +575,16 @@ class CompareTab(ScrollableFrame):
                     dir_a=dir_a, dir_b=dir_b,
                     scalars=scalars or None, axes=axes or None,
                     output_dir=out_dir,
-                    label_a=self.v_label_a.get() or "Run A",
-                    label_b=self.v_label_b.get() or "Run B",
-                    log_a=log_a if self.v_aero.get() else None,
-                    log_b=log_b if self.v_aero.get() else None,
+                    label_a=labels[0],
+                    label_b=labels[1],
+                    log_a=log_a if use_aero else None,
+                    log_b=log_b if use_aero else None,
                     fig_height=figh, dpi=dpi,
-                    delta_ranges=delta_ranges,
+                    delta_ranges=delta_ranges, ram_budget_gb=budget, max_recruits=limit,
+                    progress_callback=self._events.put,
                 )
-                self.status_lbl.config(text="Done", fg="#2E7D32")
             except Exception as exc:
-                self.status_lbl.config(text="Error", fg="#C62828")
+                self._events.put(dict(event="error", message=str(exc)))
                 print(f"\n[ERROR] {exc}")
                 import traceback; traceback.print_exc()
         threading.Thread(target=_worker, daemon=True).start()

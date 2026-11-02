@@ -28,7 +28,7 @@ def interpolate_per_region(plane_pts_2d, plane_vals, mask, h_min, v_min, px):
     Parameters
     ----------
     plane_pts_2d : (N,2) float  CFD point (h,v) coordinates in metres
-    plane_vals   : (N,)  float  scalar values at each CFD point
+    plane_vals   : (N,) or (N,S) float; columns share one triangulation
     mask         : (H,W) bool   True = solid geometry
     h_min        : float        horizontal world origin in metres
     v_min        : float        vertical world origin in metres
@@ -36,10 +36,11 @@ def interpolate_per_region(plane_pts_2d, plane_vals, mask, h_min, v_min, px):
 
     Returns
     -------
-    result : float32 ndarray (H,W)   NaN where solid or outside data hull
+    result : float32 ndarray (H,W) or (H,W,S); NaN outside data hull
     """
     H, W   = mask.shape
-    result = np.full((H, W), np.nan, dtype=np.float32)
+    plane_vals = np.asarray(plane_vals)
+    result = np.full((H, W) + plane_vals.shape[1:], np.nan, dtype=np.float32)
 
     fluid_labels, n_regions = ndlabel(~mask)
 

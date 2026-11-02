@@ -66,7 +66,9 @@ def cmd_run(args):
         geom_case     = args.geom     or None,
         data_case     = args.data     or None,
         output_dir    = args.out      or None,
-        resolution_mm = args.res      or None,
+        resolution_mm = args.res,
+        ram_budget_gb = args.ram_gb,
+        max_recruits = args.recruits,
     )
 
 
@@ -83,6 +85,8 @@ def cmd_compare(args):
         log_a      = args.log_a   or None,
         log_b      = args.log_b   or None,
         images     = not args.no_images,
+        ram_budget_gb = args.ram_gb,
+        max_recruits = args.recruits,
     )
 
 
@@ -139,7 +143,7 @@ def build_parser():
     p_run.add_argument('--axes', nargs='+', choices=['X','Y','Z'],
                        metavar='AXIS',
                        help='Axes to slice (default: X Y Z)')
-    p_run.add_argument('--res', type=int, metavar='MM',
+    p_run.add_argument('--res', type=float, metavar='MM',
                        help=f'Resolution in mm/px (default: {cfg.RESOLUTION_MM})')
     p_run.add_argument('--geom', metavar='PATH',
                        help='Override geometry .case path')
@@ -187,6 +191,12 @@ def build_parser():
                         help='Root output directory (contains NPZ/ subdir)')
     p_list.add_argument('--axis', choices=['X','Y','Z'],
                         help='Filter to one axis')
+
+    for command in (p_run, p_cmp):
+        command.add_argument('--ram-gb', type=float, metavar='GIB',
+                             help='Estimated recruit RAM budget in GiB')
+        command.add_argument('--recruits', type=int, choices=range(1, 9), default=8,
+                             help='Maximum recruits (default: 8; 1 for serial)')
 
     return parser
 

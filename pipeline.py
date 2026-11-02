@@ -12,6 +12,11 @@
 import os
 import sys
 import time
+import copy
+import gc
+import multiprocessing
+import tempfile
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 import numpy as np
 import pyvista as pv
 
@@ -20,6 +25,7 @@ import io_utils
 import geometry as geom_mod
 import interpolation as interp_mod
 import plotting
+import recruits
 
 
 # ── timer / logger ───────────────────────────────────────────────
@@ -33,12 +39,15 @@ def log(msg, t_ref=None):
 
 
 # ── helpers ───────────────────────────────────────────────────────
-def _extract_plane_jobs(cfd_mesh, scalars_to_run, axes_to_run):
+def _extract_plane_jobs(cfd_mesh, scalars_to_run, axes_to_run, staging_dir, config=cfg):
     """
     Return list of plane job dicts from the CFD mesh.
-    Each job carries the pts/vals arrays for every requested scalar.
+    Jobs carry paths to per-plane arrays instead of the entire CFD dataset.
+    With staging_dir=None, inspect sizes without writing temporary arrays.
     """
+    cfg = config
     jobs = []
+    axis_counts = {0: 0, 1: 0, 2: 0}
     for block_idx in range(cfd_mesh.n_blocks):
         b = cfd_mesh[block_idx]
         if b is None or b.n_cells == 0:
@@ -150,184 +159,229 @@ def _extract_plane_jobs(cfd_mesh, scalars_to_run, axes_to_run):
         log(f"  Block {block_idx} (axis {cfg.AXIS_LABEL[ax]}): "
             f"{len(unique)} planes  scalars={list(scalar_vals.keys())}")
 
-        for plane_idx, plane_val in enumerate(sorted(unique), start=1):
+        # Sort once instead of scanning the complete block for every plane.
+        order = np.argsort(pts[:, ax], kind='stable')
+        coordinates = pts[order, ax]
+        h_min, h_max, v_min, v_max = cfg.CAR_BOUNDS_2D[ax]
+        for plane_val in sorted(unique):
+            start = np.searchsorted(coordinates, plane_val-1e-4, side='left')
+            stop = np.searchsorted(coordinates, plane_val+1e-4, side='right')
+            indices = order[start:stop]
+            selected = pts[indices]
+            keep = ((np.abs(selected[:, ax]-plane_val) < 1e-4) &
+                    (selected[:, ha] >= h_min) & (selected[:, ha] <= h_max) &
+                    (selected[:, va] >= v_min) & (selected[:, va] <= v_max))
+            indices = np.sort(indices[keep])
+            axis_counts[ax] += 1
+            plane_idx = axis_counts[ax]
+            path = os.path.join(staging_dir, f'plane_{len(jobs):06d}.npz') if staging_dir else None
+            if staging_dir is not None:
+                np.savez(path, points=pts[indices][:, [ha, va]],
+                         values=np.column_stack([v[indices] for v in scalar_vals.values()]))
             jobs.append(dict(
                 axis=ax, ha=ha, va=va,
                 plane_idx=plane_idx,
                 plane_val=float(plane_val),
-                pts_all=pts,
-                scalar_vals=scalar_vals,
+                path=path, scalar_keys=list(scalar_vals), point_count=len(indices),
             ))
     return jobs
 
 
-# ── main entry point ──────────────────────────────────────────────
-def run_pipeline(scalars=None, axes=None,
-                 geom_case=None, data_case=None,
-                 output_dir=None, resolution_mm=None,
-                 fig_height=7.0, dpi=None):
-    """
-    Run the full slice → mask → interpolate → plot → save pipeline.
+def inspect_recruit_memory(geom_case, data_case, scalars, axes):
+    """Read actual input sizes for the same estimate used during execution."""
+    geometry = io_utils.load_geometry(geom_case)
+    geometry_bytes = sum(b.actual_memory_size * 1024 for b in geometry)
+    mesh = io_utils.load_cfd(data_case)
+    jobs = _extract_plane_jobs(mesh, scalars, axes, None)
+    if not jobs:
+        raise ValueError('No matching planes found for the selected scalars and axes.')
+    return dict(point_count=max(j['point_count'] for j in jobs), geometry_bytes=geometry_bytes)
 
-    Parameters
-    ----------
-    scalars       : list of str or None   e.g. ['Cp', 'CpT']
-                    defaults to all keys in config.SCALARS
-    axes          : list of str or None   e.g. ['X', 'Y']
-                    defaults to ['X', 'Y', 'Z']
-    geom_case     : str or None   override config.GEOMETRY_CASE
-    data_case     : str or None   override config.DATA_CASE
-    output_dir    : str or None   override config.OUTPUT_DIR
-    resolution_mm : int or None   override config.RESOLUTION_MM
+
+_RECRUIT_GEOMETRY = None
+
+
+def _init_recruit(settings, geometry_path):
+    global _RECRUIT_GEOMETRY
+    for name, value in settings.items():
+        setattr(cfg, name, value)
+    _RECRUIT_GEOMETRY = list(pv.read(geometry_path))
+
+
+def _process_plane(job, out_dir, fig_height, dpi):
+    """Process one complete plane and return only small progress metadata."""
+    ax, plane_idx, plane_val = job['axis'], job['plane_idx'], job['plane_val']
+    ax_label = cfg.AXIS_LABEL[ax]
+    val_mm = plane_val * 1000.0
+    description = f'{ax_label}#{plane_idx:03d} {val_mm:+8.1f}mm'
+    timings = dict(mask=0.0, interpolate=0.0, save=0.0, plot=0.0)
+    if job['point_count'] < 4:
+        return dict(description=description, skipped=True, timings=timings)
+    with np.load(job['path'], allow_pickle=False) as data:
+        points, values = data['points'], data['values']
+    h_min, h_max, v_min, v_max = cfg.CAR_BOUNDS_2D[ax]
+    px = 1000.0 / cfg.RESOLUTION_MM
+    stem = f'slice_{ax_label}_{plane_idx:03d}_{val_mm:+.1f}mm'
+    t = time.perf_counter()
+    mask = geom_mod.build_mask(_RECRUIT_GEOMETRY, ax, plane_val,
+                              h_min, h_max, v_min, v_max, px, plane_pts_2d=points)
+    timings['mask'] = time.perf_counter()-t
+    t = time.perf_counter()
+    grids = interp_mod.interpolate_per_region(points, values, mask, h_min, v_min, px)
+    scalar_grids = {key: grids[:, :, i] for i, key in enumerate(job['scalar_keys'])}
+    timings['interpolate'] = time.perf_counter()-t
+    t = time.perf_counter()
+    extent = np.array([h_min, h_max, v_min, v_max], dtype=np.float32)
+    npz_path = io_utils.save_plane(os.path.join(out_dir, 'NPZ', ax_label), stem,
+                                  scalar_grids, mask, extent, ax, plane_val, plane_idx)
+    timings['save'] = time.perf_counter()-t
+    t = time.perf_counter()
+    import matplotlib.pyplot as plt
+    h_label, v_label = cfg.PLOT_LABELS[ax]
+    for key, grid in scalar_grids.items():
+        fig = plotting.make_slice_plot(grid, mask, ax, plane_idx, val_mm,
+                                      h_label, v_label, extent, key,
+                                      fig_height=fig_height, dpi=dpi)
+        try:
+            png_dir = os.path.join(out_dir, 'PNG', key, ax_label)
+            os.makedirs(png_dir, exist_ok=True)
+            fig.savefig(os.path.join(png_dir, stem+'.png'),
+                        bbox_inches='tight', facecolor=cfg.BG_COLOR, dpi=dpi)
+        finally:
+            plt.close(fig)
+    timings['plot'] = time.perf_counter()-t
+    return dict(description=description, skipped=False, timings=timings,
+                npz_kb=os.path.getsize(npz_path)/1024)
+
+
+def _run_jobs(jobs, count, settings, geometry_path, out_dir, fig_height, dpi):
+    """Keep at most one pending plane per recruit."""
+    with ProcessPoolExecutor(max_workers=count,
+                             mp_context=multiprocessing.get_context('spawn'),
+                             initializer=_init_recruit,
+                             initargs=(settings, geometry_path)) as pool:
+        remaining = iter(jobs)
+        pending = {}
+        def submit_one():
+            job = next(remaining, None)
+            if job is not None:
+                pending[pool.submit(_process_plane, job, out_dir, fig_height, dpi)] = job
+        for _ in range(count):
+            submit_one()
+        try:
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    job = pending.pop(future)
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"Recruit failed on {cfg.AXIS_LABEL[job['axis']]}"
+                            f"#{job['plane_idx']:03d}: {exc}") from exc
+                    os.remove(job['path'])
+                    yield result
+                    submit_one()
+        finally:
+            for future in pending:
+                future.cancel()
+
+
+def run_pipeline(scalars=None, axes=None, geom_case=None, data_case=None,
+                 output_dir=None, resolution_mm=None, fig_height=7.0, dpi=None,
+                 ram_budget_gb=None, max_recruits=recruits.MAX_RECRUITS,
+                 progress_callback=None):
+    """Process planes using RAM/CPU-limited spawned recruits.
+
+    RAM is an estimated budget in GiB, not an enforced memory cap. Callbacks
+    receive allocation, plane and done dictionaries on the calling thread.
+    Use a main guard when calling from another script on Windows.
     """
     global _T0
     _T0 = time.perf_counter()
-
-    scalars_to_run = scalars  or list(cfg.SCALARS.keys())
-    axes_to_run    = axes     or ['X', 'Y', 'Z']
-    out_dir        = output_dir    or cfg.OUTPUT_DIR
-    res_mm         = resolution_mm or cfg.RESOLUTION_MM
-    px             = 1000.0 / res_mm
-
-    # Temporarily override config resolution for geometry/interp modules
-    _orig_res = cfg.RESOLUTION_MM
-    cfg.RESOLUTION_MM = res_mm
-
-    # Create output dirs
-    for scalar_key in scalars_to_run:
-        for ax_label in axes_to_run:
-            os.makedirs(os.path.join(out_dir, 'PNG', scalar_key, ax_label), exist_ok=True)
-    os.makedirs(os.path.join(out_dir, 'NPZ'), exist_ok=True)
-    for ax_label in axes_to_run:
-        os.makedirs(os.path.join(out_dir, 'NPZ', ax_label), exist_ok=True)
-
-    log("=" * 70)
-    log(f"CFD Slicer Pipeline")
-    log(f"  Scalars    : {scalars_to_run}")
-    log(f"  Axes       : {axes_to_run}")
-    log(f"  Resolution : {res_mm} mm/px")
-    log(f"  Output     : {out_dir}")
-    log("=" * 70)
-
-    # ── STEP 1: load ─────────────────────────────────────────────
-    log("STEP 1/4 — Loading geometry ...")
-    t = time.perf_counter()
+    settings = {name: copy.deepcopy(value) for name, value in vars(cfg).items() if name.isupper()}
+    scalars_to_run = list(dict.fromkeys(scalars if scalars is not None else cfg.SCALARS))
+    axes_to_run = list(dict.fromkeys(axes if axes is not None else ['X', 'Y', 'Z']))
+    if not scalars_to_run or any(s not in settings['SCALARS'] for s in scalars_to_run):
+        raise ValueError('Select at least one configured scalar.')
+    if not axes_to_run or any(a not in ('X', 'Y', 'Z') for a in axes_to_run):
+        raise ValueError('Select at least one of X, Y, Z.')
+    res_mm = cfg.RESOLUTION_MM if resolution_mm is None else resolution_mm
+    dpi = cfg.DPI if dpi is None else dpi
+    settings['RESOLUTION_MM'], settings['DPI'] = res_mm, dpi
+    out_dir = output_dir if output_dir is not None else cfg.OUTPUT_DIR
+    if not out_dir:
+        raise ValueError('Choose an output directory.')
+    out_dir = os.path.abspath(out_dir)
+    bounds = [settings['CAR_BOUNDS_2D'][a] for a in range(3)
+              if settings['AXIS_LABEL'][a] in axes_to_run]
+    estimate = recruits.estimate_recruit_bytes(bounds, res_mm, len(scalars_to_run),
+                                              fig_height=fig_height, dpi=dpi)
+    budget = recruits.default_budget_gib() if ram_budget_gb is None else ram_budget_gb
+    recruits.allocate_recruits(budget, estimate, max_recruits=max_recruits)
+    os.makedirs(out_dir, exist_ok=True)
+    def emit(event):
+        if progress_callback is not None:
+            progress_callback(event)
+    log('='*70)
+    log(f'CFD Slicer | Scalars: {scalars_to_run} | Axes: {axes_to_run}')
+    log(f'Resolution: {res_mm} mm/px | Output: {out_dir}')
+    log('STEP 1/4 — Loading geometry and CFD data ...')
     geom_blocks = io_utils.load_geometry(geom_case)
-    log(f"  {len(geom_blocks)} geometry parts", t)
-
-    log("STEP 1/4 — Loading CFD data ...")
-    t = time.perf_counter()
+    geometry_bytes = sum(b.actual_memory_size*1024 for b in geom_blocks)
     cfd_mesh = io_utils.load_cfd(data_case)
-    log(f"  {cfd_mesh.n_blocks} CFD blocks", t)
+    totals = dict(mask=0.0, interpolate=0.0, save=0.0, plot=0.0)
+    completed = skipped = 0
+    with tempfile.TemporaryDirectory(prefix='cfd-recruits-') as staging:
+        geometry_path = os.path.join(staging, 'geometry.vtm')
+        pv.MultiBlock(geom_blocks).save(geometry_path)
+        log('STEP 2/4 — Staging plane data ...')
+        from types import SimpleNamespace
+        jobs = _extract_plane_jobs(cfd_mesh, scalars_to_run, axes_to_run, staging,
+                                   config=SimpleNamespace(**settings))
+        del cfd_mesh, geom_blocks
+        gc.collect()
+        total = len(jobs)
+        if not total:
+            raise ValueError('No matching planes found. Check axes, scalar arrays and car bounds.')
+        point_count = max(j['point_count'] for j in jobs)
+        estimate = recruits.estimate_recruit_bytes(
+            bounds, res_mm, len(scalars_to_run), point_count=point_count,
+            geometry_bytes=geometry_bytes, fig_height=fig_height, dpi=dpi)
+        allocation = recruits.allocate_recruits(budget, estimate,
+                                               max_recruits=max_recruits, plane_count=total)
+        log(f'Recruits: {allocation.recruits} | RAM budget: {budget:.2f} GiB | '
+            f'usable now: {allocation.usable_gib:.2f} GiB | '
+            f'estimate/recruit: {allocation.per_recruit_gib:.2f} GiB | '
+            f'system reserve: {allocation.reserve_gib:.2f} GiB')
+        emit(dict(event='allocation', recruits=allocation.recruits, total=total,
+                  budget_gib=budget, per_recruit_gib=allocation.per_recruit_gib,
+                  point_count=point_count, geometry_bytes=geometry_bytes))
+        if allocation.recruits == 0:
+            raise MemoryError(
+                f'Not enough RAM budget or available memory for one recruit '
+                f'(estimated {allocation.per_recruit_gib:.2f} GiB). '
+                'Increase the budget, free memory, or use a coarser resolution.')
+        log(f'STEP 3+4/4 — Processing {total} planes with {allocation.recruits} recruits ...')
+        for processed, result in enumerate(_run_jobs(
+                jobs, allocation.recruits, settings, geometry_path, out_dir, fig_height, dpi), start=1):
+            skipped += int(result['skipped'])
+            completed += int(not result['skipped'])
+            for key in totals:
+                totals[key] += result['timings'][key]
+            status = 'SKIP (<4 points)' if result['skipped'] else f"{result['npz_kb']:.0f} KB"
+            log(f"[{processed}/{total}] {result['description']}  {status}")
+            emit(dict(event='plane', processed=processed, total=total, completed=completed,
+                      skipped=skipped, recruits=allocation.recruits))
+    wall_seconds = time.perf_counter()-_T0
+    summary = dict(event='done', total=total, completed=completed, skipped=skipped,
+                   recruits=allocation.recruits, wall_seconds=wall_seconds)
+    log(f'DONE — {completed} completed, {skipped} skipped | {out_dir}')
+    log('Cumulative recruit time (overlaps when recruits run in parallel):')
+    for key, seconds in totals.items():
+        log(f'  {key:12s}: {seconds:.1f}s')
+    log(f'  Wall clock  : {wall_seconds:.1f}s')
+    emit(summary)
+    return summary
 
-    # Print available arrays
-    for i in range(cfd_mesh.n_blocks):
-        b = cfd_mesh[i]
-        if b is not None and b.n_cells > 0:
-            log(f"  Block {i} arrays: {b.cell_centers().array_names}")
 
-    # ── STEP 2: extract plane jobs ───────────────────────────────
-    log("STEP 2/4 — Extracting plane positions ...")
-    jobs  = _extract_plane_jobs(cfd_mesh, scalars_to_run, axes_to_run)
-    total = len(jobs)
-    log(f"  Total planes: {total}")
-
-    # ── STEP 3+4: process each plane ────────────────────────────
-    log(f"\nSTEP 3+4/4 — Processing {total} planes ...\n")
-
-    t_mask_tot   = 0.0
-    t_interp_tot = 0.0
-    t_plot_tot   = 0.0
-    t_save_tot   = 0.0
-
-    for job_n, job in enumerate(jobs, start=1):
-        ax        = job['axis']
-        ha        = job['ha']
-        va        = job['va']
-        plane_idx = job['plane_idx']
-        plane_val = job['plane_val']
-        val_mm    = plane_val * 1000.0
-        pts_all   = job['pts_all']
-        scalar_vals = job['scalar_vals']
-
-        ax_label         = cfg.AXIS_LABEL[ax]
-        h_label, v_label = cfg.PLOT_LABELS[ax]
-        h_min, h_max, v_min, v_max = cfg.CAR_BOUNDS_2D[ax]
-        stem = f"slice_{ax_label}_{plane_idx:03d}_{val_mm:+.1f}mm"
-
-        # Extract CFD points for this plane (use first available scalar for mask)
-        first_vals = next(iter(scalar_vals.values()))
-        on_plane  = np.abs(pts_all[:, ax] - plane_val) < 1e-4
-        in_bounds = (on_plane &
-                     (pts_all[:, ha] >= h_min) & (pts_all[:, ha] <= h_max) &
-                     (pts_all[:, va] >= v_min) & (pts_all[:, va] <= v_max))
-        plane_pts_2d = pts_all[in_bounds][:, [ha, va]]
-
-        if len(plane_pts_2d) < 4:
-            log(f"  [{job_n:3d}/{total}] {ax_label}#{plane_idx:03d} "
-                f"{val_mm:+8.1f}mm  SKIP ({len(plane_pts_2d)} pts)")
-            continue
-
-        # 3a. geometry mask
-        t0 = time.perf_counter()
-        mask = geom_mod.build_mask(
-            geom_blocks, ax, plane_val,
-            h_min, h_max, v_min, v_max, px,
-            plane_pts_2d=plane_pts_2d
-        )
-        t_mask_tot += time.perf_counter() - t0
-
-        # 3b. interpolate all scalars
-        t0 = time.perf_counter()
-        scalar_grids = {}
-        for skey, svals_all in scalar_vals.items():
-            plane_svals = svals_all[in_bounds]
-            scalar_grids[skey] = interp_mod.interpolate_per_region(
-                plane_pts_2d, plane_svals, mask, h_min, v_min, px
-            )
-        t_interp_tot += time.perf_counter() - t0
-
-        # 3c. save NPZ (one file per plane, all scalars inside)
-        t0 = time.perf_counter()
-        extent  = np.array([h_min, h_max, v_min, v_max], dtype=np.float32)
-        npz_dir = os.path.join(out_dir, 'NPZ', ax_label)
-        npz_path = io_utils.save_plane(
-            npz_dir, stem, scalar_grids, mask, extent,
-            ax, plane_val, plane_idx
-        )
-        npz_kb = os.path.getsize(npz_path) / 1024
-        t_save_tot += time.perf_counter() - t0
-
-        # 3d. save PNG per scalar
-        t0 = time.perf_counter()
-        for skey, cp_grid in scalar_grids.items():
-            fig = plotting.make_slice_plot(
-                cp_grid, mask, ax, plane_idx, val_mm,
-                h_label, v_label, extent, skey,
-                fig_height=fig_height,
-                dpi=dpi,
-            )
-            png_dir  = os.path.join(out_dir, 'PNG', skey, ax_label)
-            png_path = os.path.join(png_dir, stem + '.png')
-            fig.savefig(png_path, bbox_inches='tight',
-                        facecolor=cfg.BG_COLOR, dpi=dpi or cfg.DPI)
-            import matplotlib.pyplot as plt
-            plt.close(fig)
-        t_plot_tot += time.perf_counter() - t0
-
-        fluid_px = int((~np.isnan(next(iter(scalar_grids.values()))) & ~mask).sum())
-        log(f"  [{job_n:3d}/{total}]  {ax_label}#{plane_idx:03d} {val_mm:+8.1f}mm  "
-            f"solid={100*mask.mean():4.1f}%  fluid={fluid_px:>7,}px  "
-            f"npz={npz_kb:4.0f}KB")
-
-    cfg.RESOLUTION_MM = _orig_res
-
-    t_wall = time.perf_counter() - _T0
-    log("\n" + "=" * 70)
-    log(f"DONE  —  {total} planes  |  {out_dir}")
-    log(f"  Mask        : {t_mask_tot:.1f}s   avg {t_mask_tot/max(total,1)*1000:.0f}ms/plane")
-    log(f"  Interpolate : {t_interp_tot:.1f}s   avg {t_interp_tot/max(total,1)*1000:.0f}ms/plane")
-    log(f"  Plot        : {t_plot_tot:.1f}s   avg {t_plot_tot/max(total,1)*1000:.0f}ms/plane")
-    log(f"  Save NPZ    : {t_save_tot:.1f}s   avg {t_save_tot/max(total,1)*1000:.0f}ms/plane")
-    log(f"  Wall clock  : {t_wall:.1f}s")
-    log("=" * 70)

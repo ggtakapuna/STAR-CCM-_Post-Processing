@@ -2,6 +2,7 @@
 ================================================================================
   CFD Slicer Pipeline
   Author  : Julian G-A
+  Contributors: John Baton
   Project : UTFR
 --------------------------------------------------------------------------------
   Slice, interpolate and compare STAR-CCM+ EnSight Gold exports.
@@ -299,6 +300,7 @@ DPI             = 150
 FILL_COLOR      = "#404040"   # solid geometry fill
 BG_COLOR        = "white"
 TICK_SPACING_MM = 100         # axis tick marks every N mm
+REFLECT_Y_IMAGES = True      # display Y -> -Y across the X-Z plane
 
 
 # ══════════════════════════════════════════════════════════════════

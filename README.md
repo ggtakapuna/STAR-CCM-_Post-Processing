@@ -219,6 +219,14 @@ Point each field at an output directory containing a `PNG/` subfolder, then scro
 
 ## Configuration
 
+Images use a Y reflection across the X-Z plane (`Y -> -Y`) by default. This
+reflects slice/compare scalar fields and geometry together, with matching axis
+coordinates and Y-plane title positions. Surface PNGs and interactive HTML views
+use the same orientation. Set `REFLECT_Y_IMAGES = False` in `config.py` to restore
+the original display orientation. Saved NPZ data, slice filenames, comparison
+statistics and mesh file exports retain the simulation coordinates. Regenerate
+PNGs/HTML to apply the display change to existing results.
+
 All settings live in `config.py`. The most commonly changed values:
 
 ```python

@@ -2,6 +2,7 @@
 ================================================================================
   CFD Slicer Pipeline
   Author  : Julian G-A
+  Contributors: John Baton
   Project : UTFR
 --------------------------------------------------------------------------------
   Slice, interpolate and compare STAR-CCM+ EnSight Gold exports.
@@ -43,6 +44,23 @@ import config as cfg
 # Maximum figure width — prevents Tk pixmap overflow on wide planes.
 # At 150 DPI, 24in = 3600px which stays within Tk's buffer limits.
 MAX_FIG_WIDTH = 24.0
+
+
+def _orient_slice_for_display(ax_slice, extent, val_mm, *grids):
+    """Reflect displayed Y coordinates and pixels together, preserving inputs."""
+    if not cfg.REFLECT_Y_IMAGES:
+        return extent, val_mm, grids
+    extent = np.array(extent, dtype=float, copy=True)
+    ha, va = cfg.PLOT_AXES[ax_slice]
+    if ha == 1:
+        extent[:2] = -extent[1::-1]
+        grids = tuple(np.flip(grid, axis=1) for grid in grids)
+    elif va == 1:
+        extent[2:] = -extent[3:1:-1]
+        grids = tuple(np.flip(grid, axis=0) for grid in grids)
+    if ax_slice == 1:
+        val_mm = -val_mm
+    return extent, val_mm, grids
 
 
 # ── Geometry overlay helpers ──────────────────────────────────────
@@ -101,6 +119,8 @@ def _fig_size(fig_height, x_lo, x_hi, y_lo, y_hi):
 def make_slice_plot(cp_grid, mask, ax_slice, plane_idx, val_mm,
                     h_label, v_label, extent, scalar_key,
                     fig_height=7.0, dpi=None):
+    extent, val_mm, (cp_grid, mask) = _orient_slice_for_display(
+        ax_slice, extent, val_mm, cp_grid, mask)
     scfg = cfg.SCALARS[scalar_key]
     h_min, h_max, v_min, v_max = extent
     pad = 0.04
@@ -157,6 +177,8 @@ def make_diff_plot(grid_a, grid_b, mask_a, mask_b,
         If float  -> colormap fixed to [-fixed_range, +fixed_range] for all planes.
         If None   -> auto-scale per plane to +/- max(|diff|).
     """
+    extent, val_mm, (grid_a, grid_b, mask_a, mask_b) = _orient_slice_for_display(
+        ax_slice, extent, val_mm, grid_a, grid_b, mask_a, mask_b)
     h_min, h_max, v_min, v_max = extent
     pad = 0.04
     x_lo = h_min - pad*(h_max-h_min);  x_hi = h_max + pad*(h_max-h_min)

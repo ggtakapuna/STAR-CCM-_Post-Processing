@@ -46,6 +46,7 @@ VIEWS
 """
 
 import os
+import config as cfg
 import time
 import numpy as np
 import pyvista as pv
@@ -298,6 +299,17 @@ def _merge_parts(prepared, groups):
     return result
 
 
+def _parts_for_display(parts):
+    """Reflect copies of surfaces and edge meshes for visual output only."""
+    if not cfg.REFLECT_Y_IMAGES:
+        return parts
+    return [dict(part, **{
+        key: (part[key].reflect(normal=(0, 1, 0), point=(0, 0, 0), inplace=False)
+              if part[key] is not None else None)
+        for key in ('surf', 'edges')
+    }) for part in parts]
+
+
 def _render_one_view(parts, scalar_key, cmap, clim,
                      vname, window_size, edge_color, edge_width,
                      bg_color, zoom=False, zoom_factor=1.8):
@@ -412,6 +424,7 @@ def render_views(prepared, scalar_key, cmap=None, clim=(-3.0, 1.0),
     -------
     dict[view_name, np.ndarray (H, W, 3)]
     """
+    prepared = _parts_for_display(prepared)
     if cmap is None:
         cmap = make_cp_cmap(vmin=clim[0], vmax=clim[1])
     views_to_render = views or list(VIEWS.keys())
@@ -479,6 +492,7 @@ def render_part_views(prepared, part_names, scalar_key,
     -------
     dict[(part_name, view_name), np.ndarray]
     """
+    prepared = _parts_for_display(prepared)
     if cmap is None:
         cmap = make_cp_cmap(vmin=clim[0], vmax=clim[1])
     views_to_render = views or list(VIEWS.keys())
@@ -616,6 +630,8 @@ def render_delta_views(prepared_a, prepared_b, scalar_key,
             geom_color=geom_color,
             has_delta=('delta' in surf_d.cell_data),
         ))
+
+    delta_parts = _parts_for_display(delta_parts)
 
     # Auto-range if needed
     if fixed_range is None:
@@ -822,6 +838,7 @@ def export_interactive_html(prepared, scalar_key, cmap=None,
     -------
     str   path to saved HTML file
     """
+    prepared = _parts_for_display(prepared)
     try:
         import plotly.graph_objects as go
     except ImportError:

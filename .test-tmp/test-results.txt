@@ -1,26 +1,30 @@
 test_insufficient_ram_and_aero_only_bypass (test_compare_recruits.ComparisonRecruitsTests.test_insufficient_ram_and_aero_only_bypass) ... ok
 test_parallel_matches_serial_and_analysis_estimate (test_compare_recruits.ComparisonRecruitsTests.test_parallel_matches_serial_and_analysis_estimate) ... ok
+test_reflection_can_be_disabled (test_display_orientation.DisplayOrientationTests.test_reflection_can_be_disabled) ... ok
+test_reflects_each_slice_axis_and_coordinates (test_display_orientation.DisplayOrientationTests.test_reflects_each_slice_axis_and_coordinates) ... ok
+test_slice_and_delta_geometry_stay_aligned (test_display_orientation.DisplayOrientationTests.test_slice_and_delta_geometry_stay_aligned) ... ok
+test_surface_reflects_y_and_keeps_scalar_values_and_original_mesh (test_display_orientation.DisplayOrientationTests.test_surface_reflects_y_and_keeps_scalar_values_and_original_mesh) ... ok
 test_budget_cpu_plane_limits_and_system_reserve (test_recruits.AllocationTests.test_budget_cpu_plane_limits_and_system_reserve) ... ok
 test_estimate_scales_with_workload (test_recruits.AllocationTests.test_estimate_scales_with_workload) ... ok
 test_invalid_budgets_and_limits (test_recruits.AllocationTests.test_invalid_budgets_and_limits) ... ok
 test_combined_fields_match_original_scalar_interpolation (test_recruits.InterpolationTests.test_combined_fields_match_original_scalar_interpolation) ... ok
 Comparing 3 matching planes  scalars=['Cp', 'CpT']
-  Run A: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmphh2pupr8\a
-  Run B: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmphh2pupr8\b
-  Output  : C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmphh2pupr8\low
+  Run A: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp3nv8zu11\a
+  Run B: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp3nv8zu11\b
+  Output  : C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp3nv8zu11\low
   Delta ranges:
     Cp: auto per-plane
     CpT: auto per-plane
 
 Recruits: 0 | estimate/recruit: 0.46 GiB
 Image comparison skipped (images=False).
-  Run A: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmphh2pupr8\a
-  Run B: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmphh2pupr8\b
-  Output  : C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmphh2pupr8\aero-only
+  Run A: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp3nv8zu11\a
+  Run B: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp3nv8zu11\b
+  Output  : C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp3nv8zu11\aero-only
 Comparing 3 matching planes  scalars=['Cp', 'CpT']
-  Run A: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpw05j8wxu\a
-  Run B: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpw05j8wxu\b
-  Output  : C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpw05j8wxu\serial
+  Run A: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp2y3dec9l\a
+  Run B: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp2y3dec9l\b
+  Output  : C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp2y3dec9l\serial
   Delta ranges:
     Cp: auto per-plane
     CpT: auto per-plane
@@ -30,11 +34,11 @@ Recruits: 1 | estimate/recruit: 0.46 GiB
 [2/3] Comparison plane complete
 [3/3] Comparison plane complete
 
-Summary CSV: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpw05j8wxu\serial\comparison_summary.csv
+Summary CSV: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp2y3dec9l\serial\comparison_summary.csv
 Comparing 3 matching planes  scalars=['Cp', 'CpT']
-  Run A: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpw05j8wxu\a
-  Run B: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpw05j8wxu\b
-  Output  : C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpw05j8wxu\parallel
+  Run A: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp2y3dec9l\a
+  Run B: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp2y3dec9l\b
+  Output  : C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp2y3dec9l\parallel
   Delta ranges:
     Cp: auto per-plane
     CpT: auto per-plane
@@ -44,75 +48,75 @@ Recruits: 2 | estimate/recruit: 0.46 GiB
 [2/3] Comparison plane complete
 [3/3] Comparison plane complete
 
-Summary CSV: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpw05j8wxu\parallel\comparison_summary.csv
+Summary CSV: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp2y3dec9l\parallel\comparison_summary.csv
   [   0.00s] ======================================================================
   [   0.00s] CFD Slicer | Scalars: ['Cp', 'CpT'] | Axes: ['X']
-  [   0.00s] Resolution: 20 mm/px | Output: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp914aeqjm\too-small
+  [   0.00s] Resolution: 20 mm/px | Output: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpeqhg9nb7\too-small
   [   0.00s] STEP 1/4 � Loading geometry and CFD data ...
-  [   0.22s] STEP 2/4 � Staging plane data ...
-  [   0.22s]   Block 0 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   0.22s]   Block 1 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   0.22s]   Block 2 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   0.28s] Recruits: 0 | RAM budget: 0.01 GiB | usable now: 0.01 GiB | estimate/recruit: 0.46 GiB | system reserve: 4.80 GiB
+  [   0.05s] STEP 2/4 � Staging plane data ...
+  [   0.06s]   Block 0 (axis X): 1 planes  scalars=['Cp', 'CpT']
+  [   0.06s]   Block 1 (axis X): 1 planes  scalars=['Cp', 'CpT']
+  [   0.06s]   Block 2 (axis X): 1 planes  scalars=['Cp', 'CpT']
+  [   0.09s] Recruits: 0 | RAM budget: 0.01 GiB | usable now: 0.01 GiB | estimate/recruit: 0.46 GiB | system reserve: 4.80 GiB
   [   0.00s] ======================================================================
   [   0.00s] CFD Slicer | Scalars: ['Cp', 'CpT'] | Axes: ['X']
-  [   0.00s] Resolution: 20 mm/px | Output: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp914aeqjm\error
-  [   0.00s] STEP 1/4 � Loading geometry and CFD data ...
-  [   0.01s] STEP 2/4 � Staging plane data ...
-  [   0.01s]   Block 0 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   0.02s]   Block 1 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   0.02s]   Block 2 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   0.06s] Recruits: 2 | RAM budget: 4.00 GiB | usable now: 4.00 GiB | estimate/recruit: 0.46 GiB | system reserve: 4.80 GiB
-  [   0.06s] STEP 3+4/4 � Processing 3 planes with 2 recruits ...
-test_insufficient_budget_and_recruit_failure_clean_up_staging (test_recruits.PipelineTests.test_insufficient_budget_and_recruit_failure_clean_up_staging) ... ok
-  [   1.78s]   Block 0 (axis X): 3 planes  scalars=['Cp', 'CpT']
-test_staged_stack_matches_original_plane_selection (test_recruits.PipelineTests.test_staged_stack_matches_original_plane_selection) ... ok
-  [   1.82s]   Block 0 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   1.82s]   Block 1 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   1.82s]   Block 2 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   0.00s] ======================================================================
-  [   0.00s] CFD Slicer | Scalars: ['Cp', 'CpT'] | Axes: ['X']
-  [   0.00s] Resolution: 20 mm/px | Output: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp1sm9cqe6\serial
+  [   0.00s] Resolution: 20 mm/px | Output: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmpeqhg9nb7\error
   [   0.00s] STEP 1/4 � Loading geometry and CFD data ...
   [   0.01s] STEP 2/4 � Staging plane data ...
   [   0.01s]   Block 0 (axis X): 1 planes  scalars=['Cp', 'CpT']
   [   0.01s]   Block 1 (axis X): 1 planes  scalars=['Cp', 'CpT']
+  [   0.01s]   Block 2 (axis X): 1 planes  scalars=['Cp', 'CpT']
+  [   0.04s] Recruits: 2 | RAM budget: 4.00 GiB | usable now: 4.00 GiB | estimate/recruit: 0.46 GiB | system reserve: 4.80 GiB
+  [   0.04s] STEP 3+4/4 � Processing 3 planes with 2 recruits ...
+test_insufficient_budget_and_recruit_failure_clean_up_staging (test_recruits.PipelineTests.test_insufficient_budget_and_recruit_failure_clean_up_staging) ... ok
+  [   1.75s]   Block 0 (axis X): 3 planes  scalars=['Cp', 'CpT']
+test_staged_stack_matches_original_plane_selection (test_recruits.PipelineTests.test_staged_stack_matches_original_plane_selection) ... ok
+  [   1.79s]   Block 0 (axis X): 1 planes  scalars=['Cp', 'CpT']
+  [   1.79s]   Block 1 (axis X): 1 planes  scalars=['Cp', 'CpT']
+  [   1.79s]   Block 2 (axis X): 1 planes  scalars=['Cp', 'CpT']
+  [   0.00s] ======================================================================
+  [   0.00s] CFD Slicer | Scalars: ['Cp', 'CpT'] | Axes: ['X']
+  [   0.00s] Resolution: 20 mm/px | Output: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp5m6necc0\serial
+  [   0.00s] STEP 1/4 � Loading geometry and CFD data ...
+  [   0.01s] STEP 2/4 � Staging plane data ...
+  [   0.01s]   Block 0 (axis X): 1 planes  scalars=['Cp', 'CpT']
+  [   0.02s]   Block 1 (axis X): 1 planes  scalars=['Cp', 'CpT']
   [   0.02s]   Block 2 (axis X): 1 planes  scalars=['Cp', 'CpT']
   [   0.05s] Recruits: 1 | RAM budget: 4.00 GiB | usable now: 4.00 GiB | estimate/recruit: 0.46 GiB | system reserve: 4.80 GiB
   [   0.05s] STEP 3+4/4 � Processing 3 planes with 1 recruits ...
-  [   1.60s] [1/3] X#001    -50.0mm  2 KB
-  [   1.71s] [2/3] X#002    +50.0mm  2 KB
-  [   1.80s] [3/3] X#003   +150.0mm  2 KB
-  [   1.91s] DONE � 3 completed, 0 skipped | C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp1sm9cqe6\serial
-  [   1.91s] Cumulative recruit time (overlaps when recruits run in parallel):
-  [   1.91s]   mask        : 0.0s
-  [   1.91s]   interpolate : 0.0s
-  [   1.91s]   save        : 0.0s
-  [   1.91s]   plot        : 0.3s
-  [   1.91s]   Wall clock  : 1.9s
+  [   1.63s] [1/3] X#001    -50.0mm  2 KB
+  [   1.73s] [2/3] X#002    +50.0mm  2 KB
+  [   1.83s] [3/3] X#003   +150.0mm  2 KB
+  [   1.94s] DONE � 3 completed, 0 skipped | C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp5m6necc0\serial
+  [   1.94s] Cumulative recruit time (overlaps when recruits run in parallel):
+  [   1.94s]   mask        : 0.0s
+  [   1.94s]   interpolate : 0.0s
+  [   1.94s]   save        : 0.0s
+  [   1.94s]   plot        : 0.3s
+  [   1.94s]   Wall clock  : 1.9s
   [   0.00s] ======================================================================
   [   0.00s] CFD Slicer | Scalars: ['Cp', 'CpT'] | Axes: ['X']
-  [   0.00s] Resolution: 20 mm/px | Output: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp1sm9cqe6\parallel
+  [   0.00s] Resolution: 20 mm/px | Output: C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp5m6necc0\parallel
   [   0.00s] STEP 1/4 � Loading geometry and CFD data ...
-  [   0.01s] STEP 2/4 � Staging plane data ...
+  [   0.02s] STEP 2/4 � Staging plane data ...
   [   0.02s]   Block 0 (axis X): 1 planes  scalars=['Cp', 'CpT']
   [   0.02s]   Block 1 (axis X): 1 planes  scalars=['Cp', 'CpT']
   [   0.02s]   Block 2 (axis X): 1 planes  scalars=['Cp', 'CpT']
-  [   0.07s] Recruits: 2 | RAM budget: 4.00 GiB | usable now: 4.00 GiB | estimate/recruit: 0.46 GiB | system reserve: 4.80 GiB
-  [   0.07s] STEP 3+4/4 � Processing 3 planes with 2 recruits ...
-  [   1.66s] [1/3] X#001    -50.0mm  2 KB
-  [   1.71s] [2/3] X#002    +50.0mm  2 KB
-  [   1.77s] [3/3] X#003   +150.0mm  2 KB
-  [   1.93s] DONE � 3 completed, 0 skipped | C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp1sm9cqe6\parallel
-  [   1.93s] Cumulative recruit time (overlaps when recruits run in parallel):
-  [   1.93s]   mask        : 0.0s
-  [   1.93s]   interpolate : 0.0s
-  [   1.93s]   save        : 0.0s
-  [   1.93s]   plot        : 0.3s
-  [   1.93s]   Wall clock  : 1.9s
+  [   0.06s] Recruits: 2 | RAM budget: 4.00 GiB | usable now: 4.00 GiB | estimate/recruit: 0.46 GiB | system reserve: 4.80 GiB
+  [   0.06s] STEP 3+4/4 � Processing 3 planes with 2 recruits ...
+  [   1.60s] [1/3] X#001    -50.0mm  2 KB
+  [   1.66s] [2/3] X#002    +50.0mm  2 KB
+  [   1.70s] [3/3] X#003   +150.0mm  2 KB
+  [   1.85s] DONE � 3 completed, 0 skipped | C:\UTFR\STAR-CCM-_Post-Processing\.test-tmp\tmp5m6necc0\parallel
+  [   1.85s] Cumulative recruit time (overlaps when recruits run in parallel):
+  [   1.85s]   mask        : 0.0s
+  [   1.85s]   interpolate : 0.0s
+  [   1.85s]   save        : 0.0s
+  [   1.85s]   plot        : 0.3s
+  [   1.85s]   Wall clock  : 1.9s
 test_windows_spawn_outputs_match_serial_and_settings_propagate (test_recruits.PipelineTests.test_windows_spawn_outputs_match_serial_and_settings_propagate) ... ok
 
 ----------------------------------------------------------------------
-Ran 9 tests in 8.770s
+Ran 13 tests in 8.601s
 
 OK

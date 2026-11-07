@@ -29,90 +29,50 @@ def main():
     root.withdraw()
 
     try:
-        # Select multiple CSV files
-        csv_files = filedialog.askopenfilenames(
-            title="Select Cp CSV Files",
+        csv_1 = filedialog.askopenfilename(
+            title="Select FIRST CSV file",
             filetypes=[("CSV files", "*.csv")],
             parent=root
         )
-
-        if not csv_files:
+        if not csv_1:
             return
 
-        plot_count = 0
+        csv_2 = filedialog.askopenfilename(
+            title="Select SECOND CSV file",
+            filetypes=[("CSV files", "*.csv")],
+            parent=root
+        )
+        if not csv_2:
+            return
 
-        for csv_file in csv_files:
+        x1, cp1 = load_csv(csv_1)
+        x2, cp2 = load_csv(csv_2)
 
-            try:
-                x, cp = load_csv(csv_file)
-
-                if not x:
-                    print(f"No data found in {csv_file}")
-                    continue
-
-                # Create a separate figure for each CSV
-                fig, ax = plt.subplots(
-                    figsize=(11, 6),
-                    num=Path(csv_file).stem
-                )
-
-                ax.scatter(
-                    x, cp,
-                    s=12,
-                    alpha=0.7,
-                    color="tab:blue",
-                    label=Path(csv_file).stem
-                )
-
-                ax.set_title(
-                    Path(csv_file).stem,
-                    fontsize=16
-                )
-
-                ax.set_xlabel(
-                    "Position X (m)",
-                    fontsize=12
-                )
-
-                ax.set_ylabel(
-                    "Pressure Coefficient, Cp",
-                    fontsize=12
-                )
-
-                ax.grid(
-                    True,
-                    linestyle="--",
-                    alpha=0.35
-                )
-
-                ax.legend(fontsize=8)
-
-                # Uncomment for conventional airfoil Cp plots:
-                # ax.invert_yaxis()
-
-                fig.tight_layout()
-
-                plot_count += 1
-
-                print(f"Loaded: {Path(csv_file).name}")
-
-            except (OSError, ValueError, IndexError) as error:
-                print(f"Error loading {csv_file}: {error}")
-
-        print(f"\nSuccessfully created {plot_count} Cp plots.")
-
-        if plot_count > 0:
-            # Display all figures
-            plt.show()
-        else:
-            messagebox.showerror(
-                "No Plots",
-                "No valid CSV files were found.",
-                parent=root
-            )
-
+    except (OSError, ValueError) as error:
+        messagebox.showerror("CSV Error", str(error), parent=root)
+        return
     finally:
         root.destroy()
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+
+    ax.scatter(x1, cp1, s=12, alpha=0.7,
+               label=Path(csv_1).stem)
+    ax.scatter(x2, cp2, s=12, alpha=0.7,
+               label=Path(csv_2).stem)
+
+    ax.set_title("Pressure Coefficient Comparison", fontsize=16)
+    ax.set_xlabel("Position X (m)", fontsize=12)
+    ax.set_ylabel("Pressure Coefficient, Cp", fontsize=12)
+
+    ax.grid(True, linestyle="--", alpha=0.35)
+    ax.legend(fontsize=8)
+
+    # Uncomment for conventional airfoil Cp plots:
+    # ax.invert_yaxis()
+
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
